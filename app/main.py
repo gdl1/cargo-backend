@@ -9,12 +9,14 @@ from app.api.router import api_router
 from app.core.config import Settings
 from app.core.exceptions import register_exception_handlers
 from app.db.session import build_engine
+from app.services.vehicles import get_vehicle_catalog
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         config = settings if settings is not None else Settings()
+        get_vehicle_catalog()
         engine = build_engine(config)
         application.state.settings = config
         application.state.engine = engine
@@ -27,7 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application = FastAPI(
         title="Cargo Backend",
         version="0.1.0",
-        description="적재 계획 백엔드의 기본 실행 환경",
+        description="차량 기준 데이터와 적재 계획 백엔드",
         lifespan=lifespan,
     )
     register_exception_handlers(application)

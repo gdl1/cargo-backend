@@ -1,6 +1,6 @@
 # cargo-backend
 
-현대 앱 개발 공모전 백엔드입니다. FastAPI, PostgreSQL, 상태 확인 API와 적재 계획 저장을 위한 DB 모델을 구성했습니다.
+현대 앱 개발 공모전 백엔드입니다. FastAPI, PostgreSQL, 상태 확인·차량 조회 API와 적재 계획 저장을 위한 DB 모델을 구성했습니다.
 
 ## 로컬 실행
 
@@ -12,6 +12,7 @@ py -3.12 -m venv .venv
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 docker compose up -d --wait db
 .\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m app.db.seed
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -22,6 +23,8 @@ docker compose up -d --wait db
 | [API 문서](http://127.0.0.1:8000/docs) | API 목록 |
 | [서버 상태](http://127.0.0.1:8000/api/v1/health) | HTTP 200 |
 | [DB 상태](http://127.0.0.1:8000/api/v1/health/db) | HTTP 200 |
+| [차량 목록](http://127.0.0.1:8000/api/v1/vehicles) | `avante_demo` 조회 |
+| [차량 상세](http://127.0.0.1:8000/api/v1/vehicles/avante_demo) | 좌석, 트렁크, 입구 규격 |
 
 FastAPI는 PC에서 실행하고 PostgreSQL은 Docker에서 실행합니다. 5432 포트를 이미 쓰고 있다면 `.env`의 `POSTGRES_PORT`를 변경하세요.
 
@@ -45,7 +48,29 @@ FastAPI는 PC에서 실행하고 PostgreSQL은 Docker에서 실행합니다. 543
 
 사용 중인 차량이나 계산 결과에 연결된 짐은 개별 삭제할 수 없습니다. 계획을 삭제하면 해당 짐, 카시트, 계산 결과도 함께 삭제됩니다. 짐 연결 제약은 트랜잭션 커밋 시 검사하므로 저장 성공 처리는 커밋 이후에 해야 합니다.
 
-이번 단계는 빈 테이블과 관계를 생성합니다. 차량 데이터 입력, 고정 데모 사용자 적용, 저장·조회 API와 배치 계산은 후속 작업입니다. 차량별 좌석·폴딩 유효성, 중복 좌석, 배치 수량·겹침·경계 및 성공 판정은 해당 서비스에서 검증합니다.
+적재 계획 저장·조회 API와 배치 계산은 후속 작업입니다. 배치 수량·겹침·경계 및 성공 판정도 해당 서비스에서 검증합니다.
+
+## 데모 사용자와 차량
+
+사용자 ID는 서버의 `DEMO_USER_ID` 설정으로 정하며 기본값은 `demo-user`입니다. 앱에서 사용자 ID를 보내지 않습니다. `get_current_user_id` 의존성을 준비했으며, 다음 단계의 계획 API에서 저장·조회 범위를 이 사용자로 제한합니다. 로그인 기능은 아닙니다.
+
+두 앱은 같은 백엔드 주소를 사용하고, 차량 목록에서 받은 `vehicle_id`로 상세 정보를 조회합니다. 차량 조회에는 사용자별 구분이 없습니다.
+
+차량 기준은 `app/data/vehicles/avante-demo-v1.json`에 있습니다. DB에는 차량 ID와 이름을 저장하고 좌석·공간 규격은 이 파일에서 읽습니다.
+
+| 항목 | 값 |
+| --- | --- |
+| 차량 / 버전 | `avante_demo` / `avante-demo-v1` |
+| 자료 구분 / 정원 | `DUMMY` / 운전자 포함 5명 |
+| 트렁크 폭 × 깊이 × 높이 | 97 × 82 × 42cm |
+| 입구 폭 × 높이 | 99 × 41.5cm |
+| 폴딩 | `fold_segments: []`, 접지 않은 기본 조합 1개 |
+
+아반떼 수치는 프로토타입용 더미입니다. 2열을 접었을 때 길이 160cm만 확인되어 있으므로, 구간별 좌석 연결과 공간 규격이 정해질 때까지 접은 조합은 제공하지 않습니다. 등록된 조합을 탑승 인원·카시트 조건으로 거르는 함수는 준비했습니다. 빈 카시트의 실제 탑승 여부는 인원수로 추정하지 않습니다.
+
+`python -m app.db.seed`는 차량 ID가 없으면 추가하고 있으면 이름을 갱신합니다. 반복 실행해도 중복되지 않으며 기존 계획이나 다른 차량을 삭제하지 않습니다. 등록 전에는 목록이 비어 있고 상세 조회는 `404 VEHICLE_NOT_FOUND`를 반환합니다.
+
+차량 파일을 수정할 때는 `data_version`도 갱신하고 등록 명령을 실행한 뒤 서버를 재시작하세요. 기준 데이터는 시작 시 검증하며 잘못된 좌석·치수·조합이면 시작을 중단합니다.
 
 ## 검사
 
@@ -56,15 +81,15 @@ FastAPI는 PC에서 실행하고 PostgreSQL은 Docker에서 실행합니다. 543
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-기본 `pytest`는 DB 통합 검사를 건너뜁니다. PostgreSQL을 켜 둔 상태에서 모델과 마이그레이션 검사까지 실행하려면 아래 명령을 사용하세요.
+기본 `pytest`는 DB 통합 검사를 건너뜁니다. PostgreSQL을 켜 둔 상태에서 모델·마이그레이션·차량 조회 검사까지 실행하려면 아래 명령을 사용하세요.
 
 ```powershell
 .\.venv\Scripts\python.exe -c "from dotenv import load_dotenv; import os, pytest; load_dotenv(); os.environ['RUN_DB_TESTS']='1'; raise SystemExit(pytest.main())"
 ```
 
-모델 검사는 임시 스키마에서 실행한 뒤 롤백합니다. 실행 계정에는 해당 DB의 스키마 생성 권한이 필요합니다. 로컬 Compose의 기본 계정과 CI 계정으로 실행할 수 있습니다.
+모델·차량 DB 검사는 임시 스키마에서 실행한 뒤 롤백합니다. 실행 계정에는 해당 DB의 스키마 생성 권한이 필요합니다. 로컬 Compose의 기본 계정과 CI 계정으로 실행할 수 있습니다.
 
-GitHub Actions에서는 Ruff, Alembic, PostgreSQL 연결과 모델 검사를 실행합니다. 마이그레이션 되돌리기·재적용 검사도 임시 스키마에서 수행합니다.
+GitHub Actions에서는 Ruff, Alembic과 전체 테스트를 실행합니다. 마이그레이션 되돌리기·재적용 검사도 임시 스키마에서 수행합니다.
 
 ## 종료
 
