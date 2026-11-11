@@ -1,0 +1,15 @@
+{
+  "vehicle_id": "avante_demo",
+  "passenger_count": 2,
+  "car_seats": ["ROW_2_RIGHT"],
+  "retained_seats": ["ROW_2_LEFT"],
+  "items": [
+    {
+      "name": "예시 상자",
+      "width_cm": 30,
+      "depth_cm": 41.5,
+      "height_cm": 20,
+      "quantity": 2
+    }
+  ]
+}
