@@ -2,7 +2,9 @@
 
 from logging.config import fileConfig
 
-import app.models  # noqa: F401 -- 후속 모델을 메타데이터에 등록합니다.
+from sqlalchemy import Connection
+
+import app.models  # noqa: F401
 from alembic import context
 from app.core.config import Settings
 from app.db.base import Base
@@ -28,18 +30,27 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def migrate_connection(connection: Connection) -> None:
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
 def run_migrations_online() -> None:
-    """URL을 ini에 문자열로 넣지 않고 엔진에 직접 전달합니다."""
+    # 통합 검사는 별도 스키마를 사용하는 연결을 전달합니다.
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        migrate_connection(connection)
+        return
+
     engine = build_engine(Settings())
     try:
         with engine.connect() as connection:
-            context.configure(
-                connection=connection,
-                target_metadata=target_metadata,
-                compare_type=True,
-            )
-            with context.begin_transaction():
-                context.run_migrations()
+            migrate_connection(connection)
     finally:
         engine.dispose()
 
