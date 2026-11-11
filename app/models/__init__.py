@@ -1,1 +1,5 @@
-"""모델을 추가하면 여기서 가져와 Alembic의 메타데이터에 등록합니다."""
+from app.models.calculation import Arrangement, Calculation, Placement
+from app.models.plan import Plan, PlanCarSeat, PlanItem
+from app.models.vehicle import Vehicle
+
+__all__ = ["Arrangement", "Calculation", "Placement", "Plan", "PlanCarSeat", "PlanItem", "Vehicle"]
