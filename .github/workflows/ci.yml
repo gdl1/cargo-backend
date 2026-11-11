@@ -1,0 +1,75 @@
+name: Backend CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: 코드 및 DB 연결 검사
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cargo
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: cargo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cargo -d cargo_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: cargo
+      POSTGRES_PASSWORD: ci_only_password
+      POSTGRES_DB: cargo_test
+      DB_CONNECT_TIMEOUT: "3"
+      DB_STATEMENT_TIMEOUT_MS: "5000"
+      RUN_DB_TESTS: "1"
+
+    steps:
+      - name: 저장소 가져오기
+        uses: actions/checkout@v7
+
+      - name: Python 준비
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: 패키지 설치
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: 코드 검사
+        run: |
+          python -m ruff check .
+          python -m ruff format --check .
+
+      - name: 마이그레이션 및 모델 차이 검사
+        run: |
+          python -m alembic upgrade head
+          python -m alembic check
+
+      - name: 테스트
+        run: python -m pytest
