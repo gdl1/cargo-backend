@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 프로젝트 환경 파일과 로컬 DB 파일
+.env.*
+!.env.example
+*.db
+
