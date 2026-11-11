@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, StringConstraints, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -10,6 +10,9 @@ class Settings(BaseSettings):
 
     app_name: str = "Cargo Backend"
     app_env: Literal["local", "test", "production"] = "local"
+    demo_user_id: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
+    ] = "demo-user"
     postgres_host: str = "127.0.0.1"
     postgres_port: int = Field(default=5432, ge=1, le=65535)
     postgres_user: str = "cargo"

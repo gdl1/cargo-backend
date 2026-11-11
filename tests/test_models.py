@@ -1,54 +1,16 @@
-import os
-from collections.abc import Iterator
 from decimal import Decimal
-from pathlib import Path
-from uuid import uuid4
 
 import pytest
-from alembic.config import Config
 from sqlalchemy import JSON, func, inspect, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, configure_mappers
-from sqlalchemy.schema import CreateSchema
 
 from alembic import command
-from app.core.config import Settings
-from app.db.session import build_engine
 from app.models import Arrangement, Calculation, Placement, Plan, PlanCarSeat, PlanItem, Vehicle
 
 
 def test_model_relationships_configure() -> None:
     configure_mappers()
-
-
-@pytest.fixture
-def model_session() -> Iterator[Session]:
-    if os.getenv("RUN_DB_TESTS") != "1":
-        pytest.skip("실제 DB 검사는 RUN_DB_TESTS=1일 때 실행합니다.")
-
-    engine = build_engine(Settings(_env_file=None))
-    schema = f"test_models_{uuid4().hex}"
-    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    try:
-        with engine.connect() as connection:
-            transaction = connection.begin()
-            original_schema = connection.dialect.default_schema_name
-            try:
-                connection.execute(CreateSchema(schema))
-                connection.execute(
-                    text("SELECT set_config('search_path', :schema, true)"), {"schema": schema}
-                )
-                connection.dialect.default_schema_name = schema
-                config.attributes["connection"] = connection
-                command.upgrade(config, "head")
-                with Session(bind=connection, join_transaction_mode="create_savepoint") as session:
-                    session.info["migration_config"] = config
-                    yield session
-            finally:
-                transaction.rollback()
-                connection.dialect.default_schema_name = original_schema
-    finally:
-        engine.dispose()
 
 
 @pytest.fixture

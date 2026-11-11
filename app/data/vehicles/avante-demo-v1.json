@@ -1,0 +1,30 @@
+{
+  "vehicle_id": "avante_demo",
+  "name": "아반떼 데모",
+  "data_version": "avante-demo-v1",
+  "data_source": "DUMMY",
+  "seat_capacity": 5,
+  "seat_codes": [
+    "ROW_1_LEFT",
+    "ROW_1_RIGHT",
+    "ROW_2_LEFT",
+    "ROW_2_CENTER",
+    "ROW_2_RIGHT"
+  ],
+  "driver_seat": "ROW_1_LEFT",
+  "fold_segments": [],
+  "packing_profiles": [
+    {
+      "target_folded_segments": [],
+      "packing_space": {
+        "width_cm": 97,
+        "depth_cm": 82,
+        "height_cm": 42
+      }
+    }
+  ],
+  "opening": {
+    "width_cm": 99,
+    "height_cm": 41.5
+  }
+}
