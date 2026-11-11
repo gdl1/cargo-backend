@@ -4,12 +4,12 @@ from decimal import Decimal
 from typing import NoReturn
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text, true
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import AppError
-from app.models import Plan, PlanCarSeat, PlanItem, PlanRetainedSeat, Vehicle
-from app.schemas.plan import PlanCreate, PlanData, PlanItemData
+from app.models import Calculation, Plan, PlanCarSeat, PlanItem, PlanRetainedSeat, Vehicle
+from app.schemas.plan import PlanCreate, PlanData, PlanItemData, PlanListData, PlanSummary
 from app.schemas.vehicle import VehicleDetail
 from app.services.vehicles import get_vehicle_catalog
 
@@ -62,7 +62,7 @@ def _validate_vehicle(payload: PlanCreate, vehicle: VehicleDetail) -> None:
                 _invalid_field(field, "운전석에는 카시트를 지정할 수 없습니다.", index)
 
 
-def _plan_data(plan: Plan) -> PlanData:
+def _plan_data(plan: Plan, latest_calculation_id: UUID | None = None) -> PlanData:
     return PlanData(
         plan_id=plan.plan_id,
         vehicle_id=plan.vehicle_id,
@@ -81,8 +81,8 @@ def _plan_data(plan: Plan) -> PlanData:
             for item in sorted(plan.items, key=lambda item: item.position)
         ],
         created_at=plan.created_at,
-        # 재시도에는 최초 저장 응답을 돌려줍니다. 계산 결과 조회는 별도 API입니다.
-        latest_calculation_id=None,
+        # 저장·재시도에는 기본값 None, 조회에는 최신 계산 ID를 전달합니다.
+        latest_calculation_id=latest_calculation_id,
     )
 
 
@@ -139,3 +139,83 @@ def create_plan(
         data = _plan_data(plan)
         data.model_dump_json()
     return data, created
+
+
+def _latest_calculation_id(plan_id):
+    return (
+        select(Calculation.calculation_id)
+        .where(Calculation.plan_id == plan_id)
+        .order_by(Calculation.created_at.desc(), Calculation.calculation_id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+
+
+def list_plans(session: Session, user_id: str, limit: int, offset: int) -> PlanListData:
+    page = (
+        select(Plan.plan_id, Plan.vehicle_id, Plan.passenger_count, Plan.created_at)
+        .where(Plan.user_id == user_id)
+        .order_by(Plan.created_at.desc(), Plan.plan_id.desc())
+        .limit(limit)
+        .offset(offset)
+        .cte("plan_page")
+    )
+    total = (
+        select(func.count().label("total"))
+        .select_from(Plan)
+        .where(Plan.user_id == user_id)
+        .subquery()
+    )
+    item_counts = (
+        select(
+            PlanItem.plan_id,
+            func.count().label("item_type_count"),
+            func.sum(PlanItem.quantity).label("item_total_quantity"),
+        )
+        .join(page, page.c.plan_id == PlanItem.plan_id)
+        .group_by(PlanItem.plan_id)
+        .subquery()
+    )
+    # 개수와 페이지를 한 SQL에서 읽어 동시 저장 중에도 같은 시점의 결과를 반환합니다.
+    statement = (
+        select(
+            total.c.total,
+            page,
+            Vehicle.name.label("vehicle_name"),
+            func.coalesce(item_counts.c.item_type_count, 0).label("item_type_count"),
+            func.coalesce(item_counts.c.item_total_quantity, 0).label("item_total_quantity"),
+            _latest_calculation_id(page.c.plan_id).label("latest_calculation_id"),
+        )
+        .select_from(
+            total.outerjoin(page, true())
+            .outerjoin(Vehicle, Vehicle.vehicle_id == page.c.vehicle_id)
+            .outerjoin(item_counts, item_counts.c.plan_id == page.c.plan_id)
+        )
+        .order_by(page.c.created_at.desc(), page.c.plan_id.desc())
+    )
+    rows = session.execute(statement).mappings().all()
+    return PlanListData(
+        plans=[
+            PlanSummary(**{key: value for key, value in row.items() if key != "total"})
+            for row in rows
+            if row["plan_id"] is not None
+        ],
+        limit=limit,
+        offset=offset,
+        total=rows[0]["total"],
+    )
+
+
+def get_plan(session: Session, user_id: str, plan_id: UUID) -> PlanData:
+    row = session.execute(
+        select(Plan, _latest_calculation_id(Plan.plan_id))
+        .where(Plan.plan_id == plan_id, Plan.user_id == user_id)
+        .options(
+            selectinload(Plan.items),
+            selectinload(Plan.car_seats),
+            selectinload(Plan.retained_seats),
+        )
+    ).one_or_none()
+    if row is None:
+        raise AppError(404, "PLAN_NOT_FOUND", "적재 계획을 찾을 수 없습니다.")
+    return _plan_data(row[0], latest_calculation_id=row[1])
