@@ -1,4 +1,5 @@
 from decimal import Decimal
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import JSON, func, inspect, select, text, update
@@ -6,7 +7,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, configure_mappers
 
 from alembic import command
-from app.models import Arrangement, Calculation, Placement, Plan, PlanCarSeat, PlanItem, Vehicle
+from app.models import (
+    Arrangement,
+    Calculation,
+    Placement,
+    Plan,
+    PlanCarSeat,
+    PlanItem,
+    PlanRetainedSeat,
+    Vehicle,
+)
 
 
 def test_model_relationships_configure() -> None:
@@ -33,6 +43,10 @@ def stored_plan(model_session: Session) -> Plan:
             ),
         ],
         car_seats=[PlanCarSeat(seat_code="ROW_2_RIGHT")],
+        retained_seats=[
+            PlanRetainedSeat(seat_code="ROW_1_LEFT"),
+            PlanRetainedSeat(seat_code="ROW_2_LEFT"),
+        ],
     )
     model_session.add(plan)
     model_session.flush()
@@ -71,6 +85,7 @@ class TestPostgresqlModels:
             "plan",
             "plan_item",
             "plan_car_seat",
+            "plan_retained_seat",
             "calculation",
             "arrangement",
             "placement",
@@ -81,6 +96,106 @@ class TestPostgresqlModels:
         command.upgrade(config, "head")
         assert set(inspect(connection).get_table_names()) - {"alembic_version"} == expected
         command.check(config)
+
+    def test_existing_plan_survives_upgrade(self, model_session: Session) -> None:
+        config = model_session.info["migration_config"]
+        connection = config.attributes["connection"]
+        command.downgrade(config, "0001")
+        connection.execute(
+            text("INSERT INTO vehicle (vehicle_id, name) VALUES ('existing', '기존 차량')")
+        )
+        plan_id = connection.scalar(
+            text(
+                "INSERT INTO plan (user_id, vehicle_id, passenger_count) "
+                "VALUES ('existing-user', 'existing', 2) RETURNING plan_id"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO plan_item "
+                "(plan_id, name, width_cm, depth_cm, height_cm, quantity, position) "
+                "VALUES (:plan_id, '기존 짐', 41.5, 30, 20, 2, 1)"
+            ),
+            {"plan_id": plan_id},
+        )
+        connection.execute(
+            text("INSERT INTO plan_car_seat VALUES (:plan_id, 'ROW_2_RIGHT')"),
+            {"plan_id": plan_id},
+        )
+        command.upgrade(config, "head")
+        plan = model_session.get(Plan, plan_id)
+        assert plan.user_id == "existing-user"
+        assert plan.vehicle_id == "existing"
+        assert plan.passenger_count == 2
+        assert plan.items[0].width_cm == Decimal("41.5")
+        assert plan.items[0].quantity == 2
+        assert [seat.seat_code for seat in plan.car_seats] == ["ROW_2_RIGHT"]
+        assert plan.retained_seats == []
+        assert plan.idempotency_key is None
+        assert plan.request_hash is None
+
+    def test_idempotency_key_unique_for_each_user(
+        self, model_session: Session, stored_plan: Plan
+    ) -> None:
+        key = uuid4()
+        stored_plan.idempotency_key = key
+        stored_plan.request_hash = "a" * 64
+        model_session.add(
+            Plan(
+                user_id="other-user",
+                vehicle_id=stored_plan.vehicle_id,
+                passenger_count=1,
+                idempotency_key=key,
+                request_hash="a" * 64,
+            )
+        )
+        model_session.flush()
+        assert model_session.scalar(select(func.count()).select_from(Plan)) == 2
+        model_session.add(
+            Plan(
+                user_id=stored_plan.user_id,
+                vehicle_id=stored_plan.vehicle_id,
+                passenger_count=1,
+                idempotency_key=key,
+                request_hash="b" * 64,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            model_session.flush()
+
+    @pytest.mark.parametrize(
+        ("key", "request_hash"),
+        [
+            (uuid4(), None),
+            (None, "a" * 64),
+            (uuid4(), ""),
+            (uuid4(), "A" * 64),
+            (uuid4(), "g" * 64),
+            (uuid4(), "a" * 63),
+            (uuid4(), "a" * 65),
+        ],
+    )
+    def test_invalid_idempotency_pair_rejected(
+        self,
+        model_session: Session,
+        stored_plan: Plan,
+        key: UUID | None,
+        request_hash: str | None,
+    ) -> None:
+        stored_plan.idempotency_key = key
+        stored_plan.request_hash = request_hash
+        with pytest.raises(IntegrityError):
+            model_session.flush()
+
+    def test_duplicate_retained_seat_rejected(
+        self, model_session: Session, stored_plan: Plan
+    ) -> None:
+        with pytest.raises(IntegrityError):
+            model_session.execute(
+                PlanRetainedSeat.__table__.insert().values(
+                    plan_id=stored_plan.plan_id, seat_code="ROW_1_LEFT"
+                )
+            )
 
     def test_decimal_values_and_item_order(self, stored_plan: Plan) -> None:
         assert [item.name for item in stored_plan.items] == ["첫 번째 짐", "두 번째 짐"]
@@ -201,6 +316,7 @@ class TestPostgresqlModels:
             ("item", "position", 0),
             ("car_seat", "seat_code", "UNKNOWN"),
             ("car_seat", "seat_code", "ROW_1_LEFT"),
+            ("retained_seat", "seat_code", "UNKNOWN"),
             ("calculation", "current_folded_segments", [1]),
             ("arrangement", "rank", 0),
             ("arrangement", "passenger_seats", ["ROW_1_RIGHT"]),
@@ -228,6 +344,7 @@ class TestPostgresqlModels:
             "plan": calculation.plan,
             "item": calculation.plan.items[0],
             "car_seat": calculation.plan.car_seats[0],
+            "retained_seat": calculation.plan.retained_seats[0],
             "calculation": calculation,
             "arrangement": stored_arrangement,
             "placement": stored_arrangement.placements[0],
@@ -283,6 +400,7 @@ class TestPostgresqlModels:
         plan = stored_arrangement.calculation.plan
         assert len(plan.items) == 2
         assert len(plan.car_seats) == 1
+        assert len(plan.retained_seats) == 2
         assert len(plan.calculations) == 1
         assert len(plan.calculations[0].arrangements) == 1
         assert len(stored_arrangement.placements) == 2
@@ -290,6 +408,14 @@ class TestPostgresqlModels:
         model_session.delete(plan)
         model_session.flush()
         model_session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
-        for model in (Plan, PlanItem, PlanCarSeat, Calculation, Arrangement, Placement):
+        for model in (
+            Plan,
+            PlanItem,
+            PlanCarSeat,
+            PlanRetainedSeat,
+            Calculation,
+            Arrangement,
+            Placement,
+        ):
             assert model_session.scalar(select(func.count()).select_from(model)) == 0
         assert model_session.scalar(select(func.count()).select_from(Vehicle)) == 1

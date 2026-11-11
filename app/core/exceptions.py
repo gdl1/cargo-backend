@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -11,11 +12,14 @@ logger = logging.getLogger(__name__)
 
 
 class AppError(Exception):
-    def __init__(self, status_code: int, code: str, message: str) -> None:
+    def __init__(
+        self, status_code: int, code: str, message: str, data: dict[str, Any] | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
+        self.data = data
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -23,7 +27,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def app_exception_handler(request: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
-            content=ErrorResponse(code=exc.code, message=exc.message).model_dump(),
+            content=ErrorResponse(code=exc.code, message=exc.message, data=exc.data).model_dump(),
         )
 
     @app.exception_handler(HTTPException)

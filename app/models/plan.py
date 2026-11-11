@@ -30,6 +30,13 @@ class Plan(Base):
     __table_args__ = (
         CheckConstraint("btrim(user_id) <> ''", name="user_id_not_blank"),
         CheckConstraint("passenger_count >= 1", name="passenger_count_positive"),
+        CheckConstraint(
+            "(idempotency_key IS NULL AND request_hash IS NULL) OR "
+            "(idempotency_key IS NOT NULL AND request_hash IS NOT NULL "
+            "AND request_hash ~ '^[0-9a-f]{64}$')",
+            name="creation_request_valid",
+        ),
+        UniqueConstraint("user_id", "idempotency_key", name="uq_plan_user_idempotency_key"),
         Index("ix_plan_user_created", "user_id", "created_at", "plan_id"),
     )
 
@@ -42,6 +49,8 @@ class Plan(Base):
     )
     passenger_count: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    idempotency_key: Mapped[UUID | None]
+    request_hash: Mapped[str | None] = mapped_column(Text)
 
     vehicle: Mapped[Vehicle] = relationship(back_populates="plans")
     items: Mapped[list[PlanItem]] = relationship(
@@ -49,6 +58,9 @@ class Plan(Base):
     )
     car_seats: Mapped[list[PlanCarSeat]] = relationship(
         back_populates="plan", order_by="PlanCarSeat.seat_code", passive_deletes="all"
+    )
+    retained_seats: Mapped[list[PlanRetainedSeat]] = relationship(
+        back_populates="plan", order_by="PlanRetainedSeat.seat_code", passive_deletes="all"
     )
     calculations: Mapped[list[Calculation]] = relationship(
         back_populates="plan",
@@ -104,3 +116,22 @@ class PlanCarSeat(Base):
     seat_code: Mapped[str] = mapped_column(Text, primary_key=True)
 
     plan: Mapped[Plan] = relationship(back_populates="car_seats")
+
+
+class PlanRetainedSeat(Base):
+    __tablename__ = "plan_retained_seat"
+    __table_args__ = (
+        CheckConstraint(
+            "seat_code IN ('ROW_1_LEFT', 'ROW_1_CENTER', 'ROW_1_RIGHT', "
+            "'ROW_2_LEFT', 'ROW_2_CENTER', 'ROW_2_RIGHT', "
+            "'ROW_3_LEFT', 'ROW_3_CENTER', 'ROW_3_RIGHT')",
+            name="seat_code_valid",
+        ),
+    )
+
+    plan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("plan.plan_id", ondelete="CASCADE"), primary_key=True
+    )
+    seat_code: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    plan: Mapped[Plan] = relationship(back_populates="retained_seats")
