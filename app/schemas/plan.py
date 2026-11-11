@@ -87,3 +87,26 @@ class PlanData(PlanSchema):
     @classmethod
     def utc_created_at(cls, value: datetime) -> datetime:
         return value.astimezone(UTC)
+
+
+class PlanSummary(PlanSchema):
+    plan_id: UUID
+    vehicle_id: str
+    vehicle_name: str
+    passenger_count: int
+    item_type_count: int = Field(ge=0)
+    item_total_quantity: int = Field(ge=0)
+    created_at: AwareDatetime
+    latest_calculation_id: UUID | None = None
+
+    @field_validator("created_at")
+    @classmethod
+    def utc_created_at(cls, value: datetime) -> datetime:
+        return value.astimezone(UTC)
+
+
+class PlanListData(PlanSchema):
+    plans: list[PlanSummary]
+    limit: int
+    offset: int
+    total: int = Field(ge=0)

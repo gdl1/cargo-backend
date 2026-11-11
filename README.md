@@ -1,6 +1,6 @@
 # cargo-backend
 
-현대 앱 개발 공모전 백엔드입니다. FastAPI, PostgreSQL, 상태 확인·차량 조회·적재 계획 저장 API를 구성했습니다.
+현대 앱 개발 공모전 백엔드입니다. FastAPI, PostgreSQL, 상태 확인·차량 조회·적재 계획 저장·조회 API를 구성했습니다.
 
 ## 로컬 실행
 
@@ -25,6 +25,7 @@ docker compose up -d --wait db
 | [DB 상태](http://127.0.0.1:8000/api/v1/health/db) | HTTP 200 |
 | [차량 목록](http://127.0.0.1:8000/api/v1/vehicles) | `avante_demo` 조회 |
 | [차량 상세](http://127.0.0.1:8000/api/v1/vehicles/avante_demo) | 좌석, 트렁크, 입구 규격 |
+| [계획 목록](http://127.0.0.1:8000/api/v1/plans) | 현재 데모 사용자의 저장된 계획 |
 
 FastAPI는 PC에서 실행하고 PostgreSQL은 Docker에서 실행합니다. 5432 포트를 이미 쓰고 있다면 `.env`의 `POSTGRES_PORT`를 변경하세요.
 
@@ -49,7 +50,7 @@ FastAPI는 PC에서 실행하고 PostgreSQL은 Docker에서 실행합니다. 543
 
 사용 중인 차량이나 계산 결과에 연결된 짐은 개별 삭제할 수 없습니다. 계획을 삭제하면 해당 짐, 카시트, 유지 좌석, 계산 결과도 함께 삭제됩니다. 짐 연결 제약은 트랜잭션 커밋 시 검사하므로 저장 성공 처리는 커밋 이후에 해야 합니다.
 
-적재 계획 목록·상세 조회 API와 배치 계산은 후속 작업입니다. 배치 수량·겹침·경계 및 성공 판정도 해당 서비스에서 검증합니다.
+배치 계산은 후속 작업입니다. 배치 수량·겹침·경계 및 성공 판정도 해당 서비스에서 검증합니다.
 
 ## 데모 사용자와 차량
 
@@ -89,7 +90,7 @@ FastAPI는 PC에서 실행하고 PostgreSQL은 Docker에서 실행합니다. 543
 
 카시트에는 운전석을 지정할 수 없습니다. 유지 좌석에 운전석을 명시하거나 카시트와 겹치는 좌석을 넣는 것은 허용합니다. 유지 좌석과 카시트는 접지 않을 조건이며 실제 탑승 위치를 뜻하지 않습니다. 트렁크보다 큰 짐도 저장할 수 있으며, 적재 가능성은 이후 계산에서 판단합니다.
 
-최초 저장은 HTTP `201`과 `plan_id`, 짐별 `item_id`, UTC 생성 시각을 반환합니다. 같은 키와 정규화한 입력으로 재전송하면 같은 응답을 `200`으로 반환합니다. `Location`은 `/api/v1/plans/{plan_id}`이며 해당 조회 API는 다음 단계에서 구현합니다. 저장 응답의 `latest_calculation_id`는 `null`입니다.
+최초 저장은 HTTP `201`과 `plan_id`, 짐별 `item_id`, UTC 생성 시각을 반환합니다. 같은 키와 정규화한 입력으로 재전송하면 같은 응답을 `200`으로 반환합니다. `Location`은 상세 조회 주소인 `/api/v1/plans/{plan_id}`입니다. 저장·재시도 응답의 `latest_calculation_id`는 `null`입니다.
 
 | 오류 | HTTP / code |
 | --- | --- |
@@ -100,6 +101,23 @@ FastAPI는 PC에서 실행하고 PostgreSQL은 Docker에서 실행합니다. 543
 
 계획·짐·좌석·재시도 정보는 한 트랜잭션으로 저장합니다. 중간에 실패하면 모두 취소하며 같은 키로 다시 요청할 수 있습니다. 처리 중 오류라면 잠시 후 같은 키·본문으로 재시도하세요. 키는 사용자와 계획 저장 작업 단위이며 계획이 존재하는 동안 유지됩니다. 서버 시작 시 초기화되지 않습니다.
 
+## 적재 계획 목록·상세 조회
+
+두 앱은 같은 백엔드 주소와 서버의 `DEMO_USER_ID` 설정으로 계획을 조회합니다. GET 요청에는 본문이나 `Idempotency-Key`가 필요하지 않습니다.
+
+| 경로 | 응답 |
+| --- | --- |
+| `GET /api/v1/plans?limit=20&offset=0` | 계획 요약 목록과 `limit`, `offset`, `total` |
+| `GET /api/v1/plans/{plan_id}` | 선택한 계획의 짐·좌석 조건과 최신 계산 ID |
+
+`limit`은 1~100(기본 20), `offset`은 0 이상(기본 0, DB 정수 범위 안)입니다. 목록은 `created_at` 내림차순이며 같으면 `plan_id` 내림차순입니다. `item_type_count`는 짐 종류 수, `item_total_quantity`는 수량 합계입니다. 저장된 계획이 없으면 빈 배열과 `total: 0`, 페이지 범위를 벗어나면 빈 배열과 실제 전체 개수를 반환합니다. 조회 개수를 줄여도 기존 계획은 삭제되지 않습니다.
+
+상세는 입력한 짐 순서·ID·치수와 카시트·유지 좌석을 보존합니다. 없는 계획과 다른 사용자에게 속한 계획은 모두 `404 PLAN_NOT_FOUND`, 잘못된 UUID나 페이지 값은 `422 VALIDATION_ERROR`입니다. 사용자 ID, 재시도 키·해시는 응답에 포함하지 않습니다.
+
+계산 이력이 없으면 `latest_calculation_id`는 `null`입니다. 이력이 생기면 성공 여부와 무관하게 최신 생성 시각의 계산을 반환하고, 시각이 같으면 계산 UUID 내림차순으로 선택합니다. 계산이 추가되어도 원래 계획 생성 시각이나 목록 순서는 바뀌지 않습니다. POST 재시도는 별도로 최초 저장 응답을 유지합니다.
+
+실제 Pleos 연동은 앱에서 접근 가능한 서버 주소가 준비된 뒤 확인합니다. `127.0.0.1`은 개발 PC 확인용입니다.
+
 ## 검사
 
 ```powershell
@@ -109,7 +127,7 @@ FastAPI는 PC에서 실행하고 PostgreSQL은 Docker에서 실행합니다. 543
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-기본 `pytest`는 DB 통합 검사를 건너뜁니다. PostgreSQL을 켜 둔 상태에서 모델·마이그레이션·API 저장 검사까지 실행하려면 아래 명령을 사용하세요.
+기본 `pytest`는 DB 통합 검사를 건너뜁니다. PostgreSQL을 켜 둔 상태에서 모델·마이그레이션·API 저장·조회 검사까지 실행하려면 아래 명령을 사용하세요.
 
 ```powershell
 .\.venv\Scripts\python.exe -c "from dotenv import load_dotenv; import os, pytest; load_dotenv(); os.environ['RUN_DB_TESTS']='1'; raise SystemExit(pytest.main())"
