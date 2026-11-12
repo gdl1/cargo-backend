@@ -664,3 +664,120 @@ def test_ai_key_missing_reports_unavailable(ai_client):
     )
     assert response.status_code == 503
     assert response.json()["code"] == "AI_UNAVAILABLE"
+
+
+def _post(client, path, payload):
+    return client.post(path, json=payload, headers={"Idempotency-Key": str(uuid4())})
+
+
+@pytest.mark.integration
+def test_edit_plan_previews_changes_without_mutating_saved_plan(
+    ai_client, model_session, monkeypatch
+):
+    created = _post(
+        ai_client,
+        "/api/v1/plans",
+        {"vehicle_id": "avante_demo", "passenger_count": 2, "items": [ITEM]},
+    )
+    assert created.status_code == 201, created.text
+    plan = created.json()["data"]
+    text = "탑승 인원을 세 명으로 바꿔줘"
+
+    def interpret(self, name, model, instructions, data):
+        if name == "estimate_stacking":
+            return StackingEstimates(assessments=[])
+        return intent(passenger_count=3, passenger_evidence=text)
+
+    monkeypatch.setattr(ResponsesClient, "call_function", interpret)
+    request = message(
+        message=text,
+        context={
+            "scenario": "EDIT_PLAN",
+            "vehicle_id": "avante_demo",
+            "plan_id": plan["plan_id"],
+            "plan_revision": plan["revision"],
+            "cargo_state": "UNKNOWN",
+        },
+    )
+    result = _post(ai_client, "/api/v1/ai/messages", request.model_dump(mode="json"))
+    assert result.status_code == 200, result.text
+    assert result.json()["data"]["status"] == "READY", result.text
+    assert result.json()["data"]["proposed_plan"]["passenger_count"] == 3
+    stored = ai_client.get(f"/api/v1/plans/{plan['plan_id']}").json()["data"]
+    assert stored["passenger_count"] == 2
+    assert stored["revision"] == plan["revision"]
+
+
+@pytest.mark.integration
+def test_add_to_selected_load_preserves_original_placements(ai_client, model_session, monkeypatch):
+    created = _post(
+        ai_client,
+        "/api/v1/plans",
+        {"vehicle_id": "avante_demo", "passenger_count": 2, "items": [ITEM]},
+    )
+    assert created.status_code == 201, created.text
+    plan = created.json()["data"]
+    calculation = _post(
+        ai_client,
+        f"/api/v1/plans/{plan['plan_id']}/calculations",
+        {
+            "expected_revision": plan["revision"],
+            "current_folded_segments": [],
+            "occupied_seats": [],
+        },
+    )
+    assert calculation.status_code == 201, calculation.text
+    result = calculation.json()["data"]
+    base = result["arrangements"][0]
+    selected = ai_client.put(
+        f"/api/v1/plans/{plan['plan_id']}/selection",
+        json={
+            "expected_revision": plan["revision"],
+            "calculation_id": result["calculation_id"],
+            "arrangement_id": base["arrangement_id"],
+        },
+        headers={"Idempotency-Key": str(uuid4())},
+    )
+    assert selected.status_code == 200, selected.text
+    text = "기존 짐은 그대로 두고 상자 1개를 추가해줘. 가로 깊이 높이는 각각 20cm야."
+
+    def interpret(self, name, model, instructions, data):
+        if name == "estimate_stacking":
+            return StackingEstimates(assessments=[])
+        return intent(
+            item_changes=[
+                change(
+                    name="상자", quantity=1, width_cm=20, depth_cm=20, height_cm=20, evidence=text
+                )
+            ],
+            packing_mode="KEEP_EXISTING",
+            mode_evidence="기존 짐은 그대로 두고",
+        )
+
+    monkeypatch.setattr(ResponsesClient, "call_function", interpret)
+    request = message(
+        message=text,
+        context={
+            "scenario": "ADD_TO_LOAD",
+            "vehicle_id": "avante_demo",
+            "plan_id": plan["plan_id"],
+            "plan_revision": plan["revision"],
+            "base_calculation_id": result["calculation_id"],
+            "base_arrangement_id": base["arrangement_id"],
+            "cargo_state": "SELECTED_ARRANGEMENT",
+        },
+    )
+    response = _post(ai_client, "/api/v1/ai/messages", request.model_dump(mode="json"))
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "READY", response.text
+    placements = data["calculation"]["arrangements"][0]["placements"]
+    for original in base["placements"]:
+        current = next(
+            placement
+            for placement in placements
+            if (placement["item_id"], placement["unit_index"])
+            == (original["item_id"], original["unit_index"])
+        )
+        assert current == original
+    assert len(data["proposed_plan"]["items"]) == 2

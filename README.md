@@ -1,148 +1,116 @@
 # cargo-backend
 
-현대 앱 개발 공모전 백엔드입니다. FastAPI, PostgreSQL, 상태 확인·차량 조회·적재 계획 저장·조회 API를 구성했습니다.
+현대자동차그룹 차량용 앱 개발 공모전의 FastAPI 백엔드입니다. 적재 계획 저장·조회, 좌석 조건별 배치 계산과 추천, 내 짐 관리, 자연어 요청과 제품 규격 검색을 제공합니다.
 
-## 로컬 실행
+## 실행
 
-Python 3.12와 Docker Desktop을 준비합니다. Docker Desktop을 실행한 뒤 저장소 최상위에서 아래 명령을 순서대로 실행하세요. Python 3.12 가상환경이 이미 있으면 첫 줄은 생략해도 됩니다.
+Python 3.12, Docker Desktop과 D 드라이브를 준비하고 저장소 최상위에서 실행합니다. 가상환경이 이미 있으면 생성 명령은 생략합니다.
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+$cargoPython = 'D:\venvs\cargo-backend\Scripts\python.exe'
+py -3.12 -m venv 'D:\venvs\cargo-backend'
+& $cargoPython -m pip install -r requirements-dev.txt
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+
 docker compose up -d --wait db
-.\.venv\Scripts\python.exe -m alembic upgrade head
-.\.venv\Scripts\python.exe -m app.db.seed
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+& $cargoPython -m alembic upgrade head
+& $cargoPython -m app.db.seed
+& $cargoPython -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-서버가 뜨면 브라우저에서 다음 주소를 확인합니다.
+FastAPI는 PC, PostgreSQL은 Docker에서 실행합니다. 기존 `.env`의 DB 설정을 유지하고 새 항목은 `.env.example`을 참고해 추가하세요. 5432 포트를 사용 중이면 `POSTGRES_PORT`를 변경합니다. 현재 마이그레이션은 `0003`이며 기존 계획을 보존합니다. 별도 ZIP을 적용하지 않은 `0002` 저장소에서 바로 올리는 변경입니다. 시드는 반복 실행해도 차량을 중복 생성하지 않습니다. 이번 변경의 추가 패키지는 없습니다.
 
 | 주소 | 확인할 내용 |
 | --- | --- |
-| [API 문서](http://127.0.0.1:8000/docs) | API 목록 |
+| [API 문서](http://127.0.0.1:8000/docs) | 요청·응답 형식과 직접 호출 |
 | [서버 상태](http://127.0.0.1:8000/api/v1/health) | HTTP 200 |
 | [DB 상태](http://127.0.0.1:8000/api/v1/health/db) | HTTP 200 |
-| [차량 목록](http://127.0.0.1:8000/api/v1/vehicles) | `avante_demo` 조회 |
-| [차량 상세](http://127.0.0.1:8000/api/v1/vehicles/avante_demo) | 좌석, 트렁크, 입구 규격 |
-| [계획 목록](http://127.0.0.1:8000/api/v1/plans) | 현재 데모 사용자의 저장된 계획 |
+| [차량 정보](http://127.0.0.1:8000/api/v1/vehicles/avante_demo) | 좌석, 폴딩 구간과 공간 치수 |
 
-FastAPI는 PC에서 실행하고 PostgreSQL은 Docker에서 실행합니다. 5432 포트를 이미 쓰고 있다면 `.env`의 `POSTGRES_PORT`를 변경하세요.
+## AI 설정
 
-## DB 모델
+일반 계획·계산 API는 API 키 없이 사용할 수 있습니다. 자연어 요청, 제품 검색과 쌓기 추정을 사용하려면 `.env`에 다음 값을 설정하고 서버를 다시 실행합니다.
 
-`alembic upgrade head`로 아래 테이블을 생성합니다. 현재 버전은 `0002`이며, 기존 `0001`의 계획 데이터를 유지하면서 유지 좌석과 저장 재시도 정보를 추가합니다.
+```dotenv
+OPENAI_API_KEY=발급받은_키
+OPENAI_MODEL=gpt-6.1-terra
+LLM_TIMEOUT_SECONDS=20
+LLM_MAX_OUTPUT_TOKENS=4000
+```
 
-| 테이블 | 저장할 내용 |
+기본 모델은 GPT-6.1 Terra이며 `reasoning.effort="none"`으로 호출합니다. 키가 없거나 쌓기 추정에 실패하면 새 쌓기를 만들지 않고 바닥 배치를 계산하며 `STACKING_ASSESSMENT_UNAVAILABLE` 경고를 반환합니다. 기존 배치 유지에서는 변경되지 않은 짐의 저장된 쌓기 판단을 재사용할 수 있습니다. 제품 검색·자연어 요청은 설정이 없으면 해당 기능의 사용 불가 오류를 반환합니다.
+
+LLM은 물품명·재질·운반 상태로 쌓기 적합성을 추정하고, Python 계산 모듈이 받침·겹침·공간 경계·허용 회전을 검사합니다. 추정 결과는 하중 검증이나 운반 안전 인증이 아닙니다. 제품 검색은 필요한 경우에만 사용하며 앱의 AR 측정값·직접 입력도 받습니다. 제품의 포장·조립·접힘 상태는 별도 후보로 반환하고, 확인하지 못한 치수는 `null`입니다.
+
+## API
+
+모든 경로의 앞부분은 `/api/v1`입니다. 전체 17개 API의 자세한 형식은 `/docs`에서 확인합니다.
+
+| 메서드·경로 | 기능 |
 | --- | --- |
-| vehicle | 차량 ID와 이름 |
-| plan | 사용자, 차량, 탑승 인원, 생성 시각, 저장 요청 키와 입력 해시 |
-| plan_item | 짐 이름, cm 치수, 수량, 입력 순서 |
-| plan_car_seat | 계획에 포함된 카시트 좌석 |
-| plan_retained_seat | 추가로 접지 않을 유지 좌석 |
-| calculation | 계획별 계산 결과와 현재 폴딩 상태 |
-| arrangement | 계산별 추천 순위, 탑승 좌석, 목표 폴딩 상태 |
-| placement | 짐 한 개의 좌표, 회전 방향, 적재 순서 |
+| `GET /health`, `GET /health/db` | 서버·DB 상태 확인 |
+| `GET /vehicles`, `GET /vehicles/{vehicle_id}` | 차량 목록·상세 조회 |
+| `POST /plans` | 직접 입력 또는 선택한 계산 결과로 계획 저장 |
+| `GET /plans` | 이름 검색, 분류·즐겨찾기 필터, 최신순·즐겨찾기순 목록 |
+| `GET /plans/{plan_id}` | 짐·좌석 조건과 선택한 배치 조회 |
+| `PUT /plans/{plan_id}` | 입력 또는 계산 결과로 기존 계획 변경 |
+| `PATCH /plans/{plan_id}/metadata` | 이름·분류·메모·즐겨찾기 변경 |
+| `PUT /plans/{plan_id}/selection` | 사용할 배치 선택 |
+| `POST /plans/{plan_id}/calculations` | 계획 계산·재계산 |
+| `GET /plans/{plan_id}/calculations/{calculation_id}` | 저장된 계산 결과 조회 |
+| `POST /calculations/preview` | 원본을 변경하지 않는 임시 계산 |
+| `POST /items`, `GET /items` | 내 짐 등록·조회 |
+| `POST /products/search` | 출처가 있는 제품 규격 후보 검색 |
+| `POST /ai/messages` | 물건 적재 확인·계획 변경·현재 배치에 짐 추가 요청 |
 
-승용님의 11월 10일 수정 ERD를 기준으로 작성했습니다. 목록 조회를 위해 `plan.user_id`, `created_at`과 `plan_item.position`을 보완했습니다. `arrangement`와 `placement`의 `plan_id`는 다른 계획의 짐이 연결되는 것을 DB에서 막는 용도입니다.
+### 입력과 저장
 
-치수와 좌표는 cm 단위의 `NUMERIC`으로 저장해 소수를 보존합니다. 현재 폴딩 상태의 `null`은 미확인, `[]`는 모두 펴진 상태입니다. 좌석과 폴딩 목록은 배열로 저장합니다.
+- 조회를 제외한 요청에는 UUID 형식의 `Idempotency-Key` 헤더가 필요합니다. 새 작업은 새 키, 같은 요청의 재전송은 같은 키와 본문을 사용합니다.
+- 치수와 API 좌표는 **cm, 소수 첫째 자리**입니다. 좌표는 공간 안의 로컬 좌표이며 전역 좌표는 `origin_cm + 로컬 좌표`입니다. 계산 내부에서는 mm 정수를 사용합니다.
+- `passenger_count`는 운전자 포함 인원입니다. 선택 항목인 `passenger_seats`를 보내면 운전석을 포함해 인원수만큼 지정합니다. 카시트·유지 좌석과 실제 착석 상태는 별도 조건입니다.
+- 짐의 `required_quantity`는 반드시 실을 수량입니다. `allowed_orientations`는 허용 방향이며 이름의 `W`, `D`, `H`는 입력한 폭·깊이·높이를 뜻합니다. 필수 체크박스를 전체 수량에 적용할지는 앱 명세에서 확인해야 합니다.
+- `name`, `category`(`TRAVEL`·`LEISURE`·`MOVING`), `memo`, `is_favorite`를 저장할 수 있습니다. 목록의 `item_summaries`에는 짐별 ID·이름·수량이 들어갑니다.
+- 변경·선택 요청에는 상세 조회에서 받은 `revision`을 `expected_revision`으로 보냅니다. 버전 충돌 시 최신 계획을 다시 조회합니다. 계산 입력을 바꾸면 기존 선택이 해제되며 이전 계산 기록은 보존됩니다.
+- 미리보기는 기본 600초 동안 유효합니다. 결과를 확인한 뒤 기존 계획에 반영하거나 새 계획으로 저장합니다. 내 짐의 `default_quantity`는 계획 작성의 기본 수량이며 계획 변경이 내 짐에 전파되지 않습니다.
 
-사용 중인 차량이나 계산 결과에 연결된 짐은 개별 삭제할 수 없습니다. 계획을 삭제하면 해당 짐, 카시트, 유지 좌석, 계산 결과도 함께 삭제됩니다. 짐 연결 제약은 트랜잭션 커밋 시 검사하므로 저장 성공 처리는 커밋 이후에 해야 합니다.
+직접 저장의 간단한 본문은 [plan-create.json](examples/plan-create.json), 전체 호출 흐름은 [phase1-smoke.ps1](examples/phase1-smoke.ps1)에 있습니다.
 
-배치 계산은 후속 작업입니다. 배치 수량·겹침·경계 및 성공 판정도 해당 서비스에서 검증합니다.
+### 계산과 차량 상태
 
-## 데모 사용자와 차량
+`REPACK_ALL`은 전체 재배치, `KEEP_EXISTING`은 선택한 배치의 기존 짐 위치를 유지하며 추가하는 모드입니다. 현재 실린 상태는 선택한 배치와 같다고 가정합니다. 점유·보호 좌석은 지키고, 가능한 폴딩 조합과 등록된 빈 좌석 공간을 사용합니다. 탑승 인원을 줄이는 제안은 하지 않습니다.
 
-사용자 ID는 서버의 `DEMO_USER_ID` 설정으로 정하며 기본값은 `demo-user`입니다. 앱에서 사용자 ID를 보내지 않습니다. 계획 저장은 `get_current_user_id` 의존성에서 받은 사용자에 연결합니다. 로그인 기능은 아닙니다.
+전체 짐의 배치를 우선하며, 제외를 허용하면 필수 수량을 지키는 대안을 찾습니다. 물건별 제외 수량과 부피를 보존하고 좌석 변경 횟수·트렁크 내부 적재 여부 등을 비교하는 규칙 기반 Reranking으로 순위를 반환합니다. 한 물건은 하나의 공간에 들어가야 하며 여러 물건을 여러 공간에 나눌 수 있습니다. 긴 짐 하나가 두 공간에 걸치는 계산은 지원하지 않습니다.
 
-두 앱은 같은 백엔드 주소를 사용하고, 차량 목록에서 받은 `vehicle_id`로 상세 정보를 조회합니다. 차량 조회에는 사용자별 구분이 없습니다.
+현재 점유·폴딩 상태는 **Pleos 앱이 SDK로 읽어 서버에 전달**합니다. 백엔드가 Pleos 차량 상태 API를 직접 조회하지 않습니다. `null`은 미확인, `[]`는 해당 상태가 없음을 확인했다는 뜻입니다. `vehicle_state`로 좌석별 상태·출처를 보완할 수 있으며 확인이 필요한 경우 `STATE_REQUIRED`와 `required_inputs`를 반환합니다.
 
-차량 기준은 `app/data/vehicles/avante-demo-v1.json`에 있습니다. DB에는 차량 ID와 이름을 저장하고 좌석·공간 규격은 이 파일에서 읽습니다.
+차량 ID는 `avante_demo`, 데이터 버전은 `avante-demo-v2`입니다. 좌석 공간·위치·폴딩 조합은 **시연용 합성값**이며 실차 아반떼의 기능이나 치수로 검증한 값이 아닙니다. 자세한 구분과 교체 기준은 [차량 데이터 안내](app/data/vehicles/README.md)를 참고하세요. 과거 결과는 계산 당시 공간과 버전을 보존합니다.
 
-| 항목 | 값 |
-| --- | --- |
-| 차량 / 버전 | `avante_demo` / `avante-demo-v1` |
-| 자료 구분 / 정원 | `DUMMY` / 운전자 포함 5명 |
-| 트렁크 폭 × 깊이 × 높이 | 97 × 82 × 42cm |
-| 입구 폭 × 높이 | 99 × 41.5cm |
-| 폴딩 | `fold_segments: []`, 접지 않은 기본 조합 1개 |
+`CALCULATION_TIMEOUT_SECONDS=2`는 배치 탐색의 시간 예산입니다. LLM·DB·네트워크 시간을 포함한 API 전체 응답 제한이 아닙니다. 시간이 지나면 찾았던 후보도 폐기하고 `TIME_LIMIT`을 반환하며, 1차에는 탐색을 이어서 실행하는 기능이 없습니다. 제한 내 탐색에서 배치를 못 찾은 경우는 `NO_LAYOUT_FOUND`로 구분합니다. `MAX_UNITS=64`는 계산 한 번의 짐 총수량에 적용한 프로토타입 보호 상한이며 실측한 최적값은 아닙니다.
 
-아반떼 수치는 프로토타입용 더미입니다. 2열을 접었을 때 길이 160cm만 확인되어 있으므로, 구간별 좌석 연결과 공간 규격이 정해질 때까지 접은 조합은 제공하지 않습니다. 등록된 조합을 탑승 인원·카시트 조건으로 거르는 함수는 준비했습니다. 빈 카시트의 실제 탑승 여부는 인원수로 추정하지 않습니다.
-
-`python -m app.db.seed`는 차량 ID가 없으면 추가하고 있으면 이름을 갱신합니다. 반복 실행해도 중복되지 않으며 기존 계획이나 다른 차량을 삭제하지 않습니다. 등록 전에는 목록이 비어 있고 상세 조회는 `404 VEHICLE_NOT_FOUND`를 반환합니다.
-
-차량 파일을 수정할 때는 `data_version`도 갱신하고 등록 명령을 실행한 뒤 서버를 재시작하세요. 기준 데이터는 시작 시 검증하며 잘못된 좌석·치수·조합이면 시작을 중단합니다.
-
-## 적재 계획 저장
-
-`POST /api/v1/plans`로 저장합니다. 요청 예시는 `examples/plan-create.json`에 있습니다. `/docs`의 해당 API에서 `Try it out`을 누르고, `Idempotency-Key`에 새 UUID를 입력한 뒤 예시 본문을 전송해도 됩니다.
-
-| 요청 항목 | 규칙 |
-| --- | --- |
-| `Idempotency-Key` 헤더 | UUID 필수. 새 저장에는 새 값, 같은 요청의 재전송에는 같은 값 |
-| `vehicle_id` | 차량 목록에 등록된 ID |
-| `passenger_count` | 운전자 포함 1명부터 차량 정원까지의 정수 |
-| `car_seats` / `retained_seats` | 생략하면 `[]`. 지원 좌석만 허용하며 각 목록 내 중복 금지 |
-| `items` | 1개 이상의 짐 종류. 이름은 공백 제거 후 1~100자, 치수는 양수 cm 소수 첫째 자리까지, 수량은 1 이상 정수 |
-
-치수 문자열·boolean·자동 반올림이 필요한 값과 알 수 없는 필드는 거절합니다. 수량은 DB 정수 범위 안에서 받으며, 치수는 JSON 숫자로 보존 가능한 값만 허용합니다. 짐 종류 수·총수량·치수의 업무상 상한은 아직 미정이므로 임의로 3개 제한을 적용하지 않았습니다. 계산 기능과 앱 연동 배포 전에 제한값을 맞춰야 합니다.
-
-카시트에는 운전석을 지정할 수 없습니다. 유지 좌석에 운전석을 명시하거나 카시트와 겹치는 좌석을 넣는 것은 허용합니다. 유지 좌석과 카시트는 접지 않을 조건이며 실제 탑승 위치를 뜻하지 않습니다. 트렁크보다 큰 짐도 저장할 수 있으며, 적재 가능성은 이후 계산에서 판단합니다.
-
-최초 저장은 HTTP `201`과 `plan_id`, 짐별 `item_id`, UTC 생성 시각을 반환합니다. 같은 키와 정규화한 입력으로 재전송하면 같은 응답을 `200`으로 반환합니다. `Location`은 상세 조회 주소인 `/api/v1/plans/{plan_id}`입니다. 저장·재시도 응답의 `latest_calculation_id`는 `null`입니다.
-
-| 오류 | HTTP / code |
-| --- | --- |
-| 입력 형식·범위·좌석 오류 | `422 VALIDATION_ERROR` |
-| 등록되지 않은 차량 | `404 VEHICLE_NOT_FOUND` |
-| 같은 키에 다른 입력 | `409 IDEMPOTENCY_KEY_REUSED` |
-| 같은 요청을 처리 중 | `409 REQUEST_IN_PROGRESS` |
-
-계획·짐·좌석·재시도 정보는 한 트랜잭션으로 저장합니다. 중간에 실패하면 모두 취소하며 같은 키로 다시 요청할 수 있습니다. 처리 중 오류라면 잠시 후 같은 키·본문으로 재시도하세요. 키는 사용자와 계획 저장 작업 단위이며 계획이 존재하는 동안 유지됩니다. 서버 시작 시 초기화되지 않습니다.
-
-## 적재 계획 목록·상세 조회
-
-두 앱은 같은 백엔드 주소와 서버의 `DEMO_USER_ID` 설정으로 계획을 조회합니다. GET 요청에는 본문이나 `Idempotency-Key`가 필요하지 않습니다.
-
-| 경로 | 응답 |
-| --- | --- |
-| `GET /api/v1/plans?limit=20&offset=0` | 계획 요약 목록과 `limit`, `offset`, `total` |
-| `GET /api/v1/plans/{plan_id}` | 선택한 계획의 짐·좌석 조건과 최신 계산 ID |
-
-`limit`은 1~100(기본 20), `offset`은 0 이상(기본 0, DB 정수 범위 안)입니다. 목록은 `created_at` 내림차순이며 같으면 `plan_id` 내림차순입니다. `item_type_count`는 짐 종류 수, `item_total_quantity`는 수량 합계입니다. 저장된 계획이 없으면 빈 배열과 `total: 0`, 페이지 범위를 벗어나면 빈 배열과 실제 전체 개수를 반환합니다. 조회 개수를 줄여도 기존 계획은 삭제되지 않습니다.
-
-상세는 입력한 짐 순서·ID·치수와 카시트·유지 좌석을 보존합니다. 없는 계획과 다른 사용자에게 속한 계획은 모두 `404 PLAN_NOT_FOUND`, 잘못된 UUID나 페이지 값은 `422 VALIDATION_ERROR`입니다. 사용자 ID, 재시도 키·해시는 응답에 포함하지 않습니다.
-
-계산 이력이 없으면 `latest_calculation_id`는 `null`입니다. 이력이 생기면 성공 여부와 무관하게 최신 생성 시각의 계산을 반환하고, 시각이 같으면 계산 UUID 내림차순으로 선택합니다. 계산이 추가되어도 원래 계획 생성 시각이나 목록 순서는 바뀌지 않습니다. POST 재시도는 별도로 최초 저장 응답을 유지합니다.
-
-실제 Pleos 연동은 앱에서 접근 가능한 서버 주소가 준비된 뒤 확인합니다. `127.0.0.1`은 개발 PC 확인용입니다.
+이번에 반영한 결정과 남은 확인은 [1차 범위](docs/phase1-scope.md)에 정리했습니다.
 
 ## 검사
 
-```powershell
-.\.venv\Scripts\python.exe -m alembic check
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m ruff format --check .
-.\.venv\Scripts\python.exe -m pytest
-```
-
-기본 `pytest`는 DB 통합 검사를 건너뜁니다. PostgreSQL을 켜 둔 상태에서 모델·마이그레이션·API 저장·조회 검사까지 실행하려면 아래 명령을 사용하세요.
+서버와 별도 터미널에서 실행합니다.
 
 ```powershell
-.\.venv\Scripts\python.exe -c "from dotenv import load_dotenv; import os, pytest; load_dotenv(); os.environ['RUN_DB_TESTS']='1'; raise SystemExit(pytest.main())"
+$cargoPython = 'D:\venvs\cargo-backend\Scripts\python.exe'
+& $cargoPython -m alembic check
+& $cargoPython -m ruff check .
+& $cargoPython -m ruff format --check .
+& $cargoPython -m pytest
+
+# PostgreSQL 통합 검사 포함
+& $cargoPython -c "from dotenv import load_dotenv; import os,pytest; load_dotenv(); os.environ['RUN_DB_TESTS']='1'; raise SystemExit(pytest.main())"
+
+# 서버가 실행 중일 때 실제 API 흐름 확인
+.\examples\phase1-smoke.ps1
 ```
 
-DB 검사는 임시 스키마에서 실행하고 롤백하거나 검사 종료 시 해당 스키마를 삭제합니다. 동시 요청 검사는 서로 다른 DB 연결에서 수행합니다. 실행 계정에는 스키마 생성 권한이 필요하며, 로컬 Compose의 기본 계정과 CI 계정으로 실행할 수 있습니다.
+연동 예제와 같은 요청 흐름은 Linux·Python 3.12·PostgreSQL 16.2에서 실제 HTTP로 확인했습니다. PowerShell 스크립트 자체는 Windows에서 아직 실행하지 않았습니다.
 
-GitHub Actions에서는 Ruff, Alembic과 전체 테스트를 실행합니다. 마이그레이션 되돌리기·재적용 검사도 임시 스키마에서 수행합니다.
+DB 검사는 임시 스키마에서 실행하며 스키마 생성 권한이 필요합니다. GitHub Actions에서도 Ruff, 마이그레이션과 테스트를 실행합니다. 실 LLM 응답 품질과 실제 Pleos 기기의 호출은 별도 검증이 필요합니다. `127.0.0.1`은 개발 PC 확인용이며 앱 연동에는 팀이 접근할 서버 주소가 필요합니다.
 
-## 종료
+서버 종료는 `Ctrl+C`, DB 종료는 `docker compose down`입니다. DB 데이터는 Docker 볼륨에 남습니다. macOS·Linux에서는 Python 3.12 가상환경의 `.venv/bin/python`을 사용하면 됩니다.
 
-서버 터미널에서 `Ctrl+C`를 누른 뒤 `docker compose down`으로 PostgreSQL을 종료합니다. 다음에 실행할 때도 DB 데이터는 볼륨에 남아 있습니다.
-
-## 패키지
-
-개발 PC에서는 `requirements-dev.txt` 하나를 설치합니다. 서버에서 실행 패키지만 설치할 때는 `requirements.txt`를 사용합니다. 실행 패키지의 버전을 바꾸면 두 파일에 같이 반영하세요.
-
-macOS와 Linux에서는 `python3.12 -m venv .venv`로 가상환경을 만들고 `.venv/bin/python`을 사용합니다. `.env`가 없으면 `.env.example`을 복사하세요.
+새 버전에서 계획을 수정한 뒤 `0002`로 되돌리면 이력 항목의 의미가 달라질 수 있어 마이그레이션이 중단됩니다. 되돌려야 한다면 변경 전 DB 백업을 사용하세요.
