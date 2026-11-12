@@ -373,6 +373,182 @@ def test_unresolved_reference_never_silently_completes():
     }
 
 
+def answer_item_reference(draft, item_ids):
+    draft["questions"] = _required_questions(draft, intent(), set())
+    return apply_answers(
+        draft,
+        message(
+            conversation_id=uuid4(),
+            conversation_version=1,
+            message="선택한 짐이에요",
+            answers=[
+                {
+                    "question_id": "item_reference",
+                    "answer": [{"item_id": item_id} for item_id in item_ids],
+                }
+            ],
+        ),
+    )
+
+
+def test_one_ambiguous_removal_can_target_multiple_selected_items():
+    draft = state()
+    first, second = str(uuid4()), str(uuid4())
+    draft["plan"]["items"] = [{**ITEM, "item_id": first}, {**ITEM, "item_id": second}]
+    text = "이 의자들을 빼줘"
+    parsed = intent(
+        item_changes=[change(operation="REMOVE", evidence=text)],
+        ambiguous_item_reference=True,
+    )
+    apply_intent(draft, parsed, text, [], set())
+    answered = answer_item_reference(draft, [first, second])
+    apply_intent(draft, intent(), "선택한 짐이에요", [], answered)
+    assert len(draft["plan"]["items"]) == 2
+    assert {operation["item_id"] for operation in draft["pending_operations"]} == {first, second}
+    assert "pending_reference_request" not in draft
+    draft["questions"] = _required_questions(draft, intent(), answered)
+    apply_answers(
+        draft,
+        message(
+            conversation_id=uuid4(),
+            conversation_version=2,
+            answers=[{"question_id": "confirm_changes", "answer": True}],
+        ),
+    )
+    assert draft["plan"]["items"] == []
+
+
+def test_multiple_references_follow_resolved_actions_not_selection_order():
+    draft = state()
+    first, second = str(uuid4()), str(uuid4())
+    draft["plan"]["items"] = [
+        {**ITEM, "item_id": first},
+        {**ITEM, "item_id": second, "name": "배낭"},
+    ]
+    update = change(operation="UPDATE", name=None, quantity=3, evidence="의자를 세 개로")
+    remove = change(operation="REMOVE", name=None, quantity=None, evidence="배낭은 빼줘")
+    text = "의자를 세 개로 하고 배낭은 빼줘"
+    apply_intent(
+        draft,
+        intent(item_changes=[update, remove], ambiguous_item_reference=True),
+        text,
+        [],
+        set(),
+    )
+    answered = answer_item_reference(draft, [second, first])
+    resolved = intent(
+        item_changes=[
+            update.model_copy(update={"item_id": first, "evidence": "선택한 짐이에요"}),
+            remove.model_copy(update={"item_id": second, "evidence": "선택한 짐이에요"}),
+        ]
+    )
+    apply_intent(draft, resolved, "선택한 짐이에요", [], answered)
+    assert draft["plan"]["items"][0]["quantity"] == 3
+    assert draft["pending_operations"][0]["item_id"] == second
+    assert "pending_reference_request" not in draft
+
+
+@pytest.mark.parametrize("followup", ["empty", "partial", "changed_action", "unselected_target"])
+def test_unresolved_multiple_references_progress_one_action_at_a_time(followup):
+    draft = state()
+    draft["context"]["cargo_state"] = "EMPTY"
+    first, second, other = str(uuid4()), str(uuid4()), str(uuid4())
+    draft["plan"]["items"] = [
+        {**ITEM, "item_id": first},
+        {**ITEM, "item_id": second, "name": "배낭"},
+        {**ITEM, "item_id": other, "name": "상자"},
+    ]
+    changes = [
+        change(operation="UPDATE", name=None, quantity=3, evidence="의자를 세 개로"),
+        change(operation="UPDATE", name=None, quantity=4, evidence="배낭을 네 개로"),
+    ]
+    text = "의자를 세 개로 하고 배낭을 네 개로 바꿔줘"
+    apply_intent(
+        draft,
+        intent(item_changes=changes, ambiguous_item_reference=True),
+        text,
+        [],
+        set(),
+    )
+    answered = answer_item_reference(draft, [first, second])
+    resolved_changes = []
+    if followup != "empty":
+        resolved_changes = [changes[0].model_copy(update={"item_id": first})]
+    if followup == "changed_action":
+        resolved_changes.append(changes[1].model_copy(update={"item_id": second, "quantity": 9}))
+    if followup == "unselected_target":
+        resolved_changes.append(changes[1].model_copy(update={"item_id": other}))
+    apply_intent(draft, intent(item_changes=resolved_changes), "선택한 짐이에요", [], answered)
+    assert [item["quantity"] for item in draft["plan"]["items"]] == [2, 2, 2]
+    questions = _required_questions(draft, intent(), answered)
+    reference = next(
+        question for question in questions if question["question_id"] == "item_reference"
+    )
+    assert changes[0].evidence in reference["message"]
+    answered = answer_item_reference(draft, [first])
+    apply_intent(draft, intent(), "선택한 짐이에요", [], answered)
+    assert [item["quantity"] for item in draft["plan"]["items"]] == [3, 2, 2]
+    reference = next(
+        question
+        for question in _required_questions(draft, intent(), answered)
+        if question["question_id"] == "item_reference"
+    )
+    assert changes[1].evidence in reference["message"]
+    answered = answer_item_reference(draft, [second])
+    apply_intent(draft, intent(), "선택한 짐이에요", [], answered)
+    assert [item["quantity"] for item in draft["plan"]["items"]] == [3, 4, 2]
+    assert _required_questions(draft, intent(), answered) == []
+    assert "pending_reference_request" not in draft
+
+
+def test_resolving_references_preserves_known_targets_and_new_items():
+    draft = state()
+    first, second, known, saved_id = [str(uuid4()) for _ in range(4)]
+    draft["plan"]["items"] = [
+        {**ITEM, "item_id": first},
+        {**ITEM, "item_id": second, "name": "배낭"},
+        {**ITEM, "item_id": known, "name": "상자"},
+    ]
+    unknown_changes = [
+        change(operation="UPDATE", name=None, quantity=3, evidence="의자는 세 개"),
+        change(operation="UPDATE", name=None, quantity=4, evidence="배낭은 네 개"),
+    ]
+    all_changes = [
+        unknown_changes[0],
+        change(operation="UPDATE", item_id=known, name=None, quantity=5, evidence="상자는 다섯 개"),
+        change(operation="ADD", name="새 상자", evidence="새 상자 추가"),
+        change(
+            operation="ADD_SAVED_ITEM", saved_item_id=saved_id, name=None, evidence="내 의자 추가"
+        ),
+        unknown_changes[1],
+    ]
+    text = "의자는 세 개, 상자는 다섯 개, 새 상자 추가, 내 의자 추가, 배낭은 네 개"
+    saved_items = [{**ITEM, "saved_item_id": saved_id, "default_quantity": 1}]
+    apply_intent(
+        draft,
+        intent(item_changes=all_changes, ambiguous_item_reference=True),
+        text,
+        saved_items,
+        set(),
+    )
+    answered = answer_item_reference(draft, [second, first])
+    apply_intent(
+        draft,
+        intent(
+            item_changes=[
+                unknown_changes[0].model_copy(update={"item_id": first}),
+                unknown_changes[1].model_copy(update={"item_id": second}),
+            ]
+        ),
+        "선택한 짐이에요",
+        saved_items,
+        answered,
+    )
+    assert [item["quantity"] for item in draft["plan"]["items"][:3]] == [3, 4, 5]
+    assert [item["name"] for item in draft["plan"]["items"][3:]] == ["새 상자", "의자"]
+    assert "pending_reference_request" not in draft
+
+
 def test_dimension_confirmation_only_clears_the_selected_duplicate_name():
     draft = state()
     first, second = str(uuid4()), str(uuid4())

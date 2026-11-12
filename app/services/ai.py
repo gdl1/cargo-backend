@@ -291,6 +291,53 @@ def apply_answers(state: dict, payload: AiMessage) -> set[str]:
     return answered
 
 
+def _resolve_reference_changes(state: dict, intent: CargoIntent) -> list[ItemChange] | None:
+    pending = [ItemChange.model_validate(change) for change in state["pending_reference_changes"]]
+    selected = state["resolved_item_ids"]
+    unresolved = [
+        index
+        for index, change in enumerate(pending)
+        if change.operation in {"UPDATE", "REMOVE"} and change.item_id is None
+    ]
+    resolved = {index: [change] for index, change in enumerate(pending) if index not in unresolved}
+    if unresolved and (len(unresolved) == 1 or state.get("reference_single_step")):
+        index = unresolved[0]
+        resolved[index] = [
+            pending[index].model_copy(update={"item_id": UUID(item_id)}) for item_id in selected
+        ]
+    elif unresolved:
+        candidates = [
+            change
+            for change in intent.item_changes
+            if change.operation in {"UPDATE", "REMOVE"} and str(change.item_id) in selected
+        ]
+        for index in unresolved:
+            original = pending[index]
+            match = next(
+                (
+                    change
+                    for change in candidates
+                    if change.model_dump(exclude={"item_id", "evidence"})
+                    == original.model_dump(exclude={"item_id", "evidence"})
+                ),
+                None,
+            )
+            if match is None:
+                break
+            candidates.remove(match)
+            resolved[index] = [original.model_copy(update={"item_id": match.item_id})]
+        matched_ids = {
+            str(change.item_id) for index in unresolved for change in resolved.get(index, [])
+        }
+        if len(resolved) != len(pending) or candidates or matched_ids != set(selected):
+            state["reference_single_step"] = True
+            state.pop("resolved_item_ids", None)
+            return None
+    remaining = [change for index, change in enumerate(pending) if index not in resolved]
+    state["pending_reference_changes"] = json_data(remaining)
+    return [change for index in range(len(pending)) for change in resolved.get(index, [])]
+
+
 def apply_intent(
     state: dict, intent: CargoIntent, message: str, saved_items: list[dict], answered: set[str]
 ) -> None:
@@ -353,17 +400,20 @@ def apply_intent(
     if intent.ambiguous_item_reference and "item_reference" not in answered:
         state["pending_reference_request"] = message
         state["pending_reference_changes"] = json_data(intent.item_changes)
+        state.pop("reference_single_step", None)
         return
     if intent.ambiguous_required_quantity:
         state["required_quantity_confirmation"] = True
         return
     changes = intent.item_changes
+    reference_ids = set(state.get("resolved_item_ids", [])) | {
+        change["item_id"]
+        for change in state.get("pending_reference_changes", [])
+        if change.get("item_id") is not None
+    }
     if "item_reference" in answered and state.get("pending_reference_changes"):
-        pending = state["pending_reference_changes"]
-        selected_ids = state["resolved_item_ids"]
-        if len(pending) == 1 and len(selected_ids) == 1:
-            changes = [ItemChange.model_validate({**pending[0], "item_id": selected_ids[0]})]
-        else:
+        changes = _resolve_reference_changes(state, intent)
+        if changes is None:
             return
     known_saved = {item["saved_item_id"]: item for item in saved_items}
     for change in changes:
@@ -372,8 +422,10 @@ def apply_intent(
             or _evidence(change.evidence, state.get("pending_reference_request", ""))
         ):
             raise LlmUnavailable("Item change lacks user evidence")
-        if "item_reference" in answered and str(change.item_id) not in state.get(
-            "resolved_item_ids", []
+        if (
+            "item_reference" in answered
+            and change.operation in {"UPDATE", "REMOVE"}
+            and str(change.item_id) not in reference_ids
         ):
             raise LlmUnavailable("Resolved item reference does not match")
         match = next(
@@ -485,10 +537,11 @@ def apply_intent(
         for field in ("width_cm", "depth_cm", "height_cm"):
             if getattr(change, field) is not None and match.get(field) is None:
                 match[field] = json_data(getattr(change, field))
-    if changes and "item_reference" in answered:
+    if changes and "item_reference" in answered and not state.get("pending_reference_changes"):
         state.pop("pending_reference_request", None)
         state.pop("pending_reference_changes", None)
         state.pop("resolved_item_ids", None)
+        state.pop("reference_single_step", None)
 
 
 def _required_questions(state: dict, intent: CargoIntent, answered: set[str]) -> list[dict]:
@@ -546,11 +599,22 @@ def _required_questions(state: dict, intent: CargoIntent, answered: set[str]) ->
             )
         )
     if state.get("pending_reference_request"):
+        reference_message = "대상 짐을 구분할 수 있도록 item_id가 포함된 짐 정보를 확인해 주세요."
+        if state.get("reference_single_step"):
+            pending = next(
+                change
+                for change in state["pending_reference_changes"]
+                if change["operation"] in {"UPDATE", "REMOVE"} and change["item_id"] is None
+            )
+            reference_message = (
+                f"‘{pending['evidence']}’ 변경을 적용할 짐만 선택해 주세요. "
+                "나머지 변경은 이어서 확인합니다."
+            )
         questions.append(
             _question(
                 "item_reference",
                 "plan.items",
-                "대상 짐을 구분할 수 있도록 item_id가 포함된 짐 정보를 확인해 주세요.",
+                reference_message,
             )
         )
     if state.get("required_quantity_confirmation"):
