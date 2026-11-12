@@ -100,6 +100,19 @@ def test_list_summaries_match_saved_plans(
             "item_total_quantity": 5,
             "created_at": original["created_at"],
             "latest_calculation_id": None,
+            "revision": original["revision"],
+            "updated_at": original["updated_at"],
+            "selected_calculation_id": None,
+            "selected_arrangement_id": None,
+            "name": None,
+            "category": None,
+            "memo": None,
+            "is_favorite": False,
+            "favorited_at": None,
+            "item_summaries": [
+                {"item_id": item["item_id"], "name": item["name"], "quantity": item["quantity"]}
+                for item in original["items"]
+            ],
         }
 
 

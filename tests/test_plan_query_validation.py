@@ -88,9 +88,10 @@ def test_query_openapi_documents_pagination_and_uuid(application: FastAPI) -> No
     document = application.openapi()
     operation = document["paths"]["/api/v1/plans"]["get"]
     parameters = {parameter["name"]: parameter for parameter in operation["parameters"]}
-    assert set(parameters) == {"limit", "offset"}
+    assert set(parameters) == {"limit", "offset", "sort", "q", "category", "favorite"}
     for name in parameters:
         assert parameters[name]["in"] == "query"
+    for name in ("limit", "offset"):
         assert parameters[name]["schema"]["type"] == "integer"
     assert parameters["limit"]["schema"]["default"] == 20
     assert parameters["limit"]["schema"]["minimum"] == 1
