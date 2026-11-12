@@ -256,6 +256,70 @@ def test_explicit_dimension_change_requires_structured_measurement():
     assert draft["dimension_confirmation_ids"] == []
 
 
+@pytest.mark.parametrize("updates", [{"width_cm": 30}, {"transport_state": "ASSEMBLED"}])
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_removing_item_clears_its_pending_dimension_question(updates, confirmed):
+    draft = state()
+    draft["context"]["cargo_state"] = "EMPTY"
+    removed_id, remaining_id = str(uuid4()), str(uuid4())
+    draft["plan"]["items"] = [
+        {**ITEM, "item_id": removed_id},
+        {**ITEM, "item_id": remaining_id, "name": "배낭"},
+    ]
+    text = "의자 운반 상태와 치수를 바꿔줘"
+    apply_intent(
+        draft,
+        intent(
+            item_changes=[change(operation="UPDATE", item_id=removed_id, evidence=text, **updates)]
+        ),
+        text,
+        [],
+        set(),
+    )
+    text = "그 의자를 빼줘"
+    parsed = intent(item_changes=[change(operation="REMOVE", item_id=removed_id, evidence=text)])
+    apply_intent(draft, parsed, text, [], set())
+    draft["questions"] = _required_questions(draft, parsed, set())
+    answered = apply_answers(
+        draft,
+        message(
+            conversation_id=uuid4(),
+            conversation_version=2,
+            answers=[{"question_id": "confirm_changes", "answer": confirmed}],
+        ),
+    )
+    questions = _required_questions(draft, intent(), answered)
+    if confirmed:
+        assert [item["item_id"] for item in draft["plan"]["items"]] == [remaining_id]
+        assert questions == []
+    else:
+        assert len(draft["plan"]["items"]) == 2
+        assert "item_dimensions" in {question["question_id"] for question in questions}
+
+
+def test_removing_item_preserves_other_pending_dimension_confirmations():
+    draft = state()
+    removed_id, remaining_id = str(uuid4()), str(uuid4())
+    draft["plan"]["items"] = [
+        {**ITEM, "item_id": removed_id},
+        {**ITEM, "item_id": remaining_id},
+    ]
+    draft["dimension_confirmation_ids"] = [removed_id, remaining_id]
+    text = "이 의자를 빼줘"
+    parsed = intent(item_changes=[change(operation="REMOVE", item_id=removed_id, evidence=text)])
+    apply_intent(draft, parsed, text, [], set())
+    draft["questions"] = _required_questions(draft, parsed, set())
+    apply_answers(
+        draft,
+        message(
+            conversation_id=uuid4(),
+            conversation_version=1,
+            answers=[{"question_id": "confirm_changes", "answer": True}],
+        ),
+    )
+    assert draft["dimension_confirmation_ids"] == [remaining_id]
+
+
 def test_ambiguous_remove_is_preserved_until_target_and_confirmation():
     draft = state()
     item_id = str(uuid4())

@@ -204,6 +204,11 @@ def _confirm_pending(state: dict, answer) -> None:
                 _invalid("변경 대상 짐이 바뀌었습니다. 다시 요청해 주세요.")
             if operation["kind"] == "remove":
                 state["plan"]["items"].remove(item)
+                state["dimension_confirmation_ids"] = [
+                    item_id
+                    for item_id in state.get("dimension_confirmation_ids", [])
+                    if item_id != operation["item_id"]
+                ]
             else:
                 item.update(operation["changes"])
     state["pending_operations"] = []
