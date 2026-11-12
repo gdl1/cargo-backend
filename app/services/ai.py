@@ -461,7 +461,8 @@ def apply_intent(
         if change.operation == "UPDATE":
             for field in ("quantity", "required_quantity"):
                 value = getattr(change, field)
-                if value is not None and value < match.get(field, 0):
+                previous = match.get(field)
+                if value is not None and previous is not None and value < previous:
                     pending_item_changes[field] = value
             if change.allowed_orientations is not None and (
                 set(change.allowed_orientations)

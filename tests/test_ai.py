@@ -571,6 +571,38 @@ def test_dimension_confirmation_only_clears_the_selected_duplicate_name():
     assert draft["dimension_confirmation_ids"] == [first]
 
 
+@pytest.mark.parametrize("old_quantity,new_quantity", [(None, 1), (None, 3), (3, 1)])
+def test_quantity_clarification_only_confirms_a_known_decrease(old_quantity, new_quantity):
+    draft = state()
+    apply_intent(
+        draft, intent(item_changes=[change(quantity=old_quantity)]), "의자 두 개", [], set()
+    )
+    item = draft["plan"]["items"][0]
+    text = f"의자는 {new_quantity}개야"
+    apply_intent(
+        draft,
+        intent(
+            item_changes=[
+                change(
+                    operation="UPDATE",
+                    item_id=item["item_id"],
+                    quantity=new_quantity,
+                    evidence=text,
+                )
+            ]
+        ),
+        text,
+        [],
+        set(),
+    )
+    if old_quantity is None:
+        assert item["quantity"] == new_quantity
+        assert not draft.get("pending_operations")
+    else:
+        assert item["quantity"] == old_quantity
+        assert draft["pending_operations"][0]["changes"] == {"quantity": new_quantity}
+
+
 def test_required_count_and_rotation_relaxation_wait_for_confirmation():
     draft = state()
     item_id = str(uuid4())
@@ -799,6 +831,75 @@ def test_ai_ar_followup_preview_replay_and_no_automatic_plan_save(
     )
     assert stale.status_code == 409
     assert stale.json()["code"] == "CONVERSATION_VERSION_CONFLICT"
+
+
+@pytest.mark.integration
+def test_ai_unknown_quantity_can_be_clarified_and_replayed(ai_client, model_session, monkeypatch):
+    def interpret(self, name, model, instructions, data):
+        if name == "estimate_stacking":
+            return StackingEstimates(assessments=[])
+        if not data["plan"]["items"]:
+            return intent(
+                item_changes=[
+                    change(
+                        quantity=None,
+                        width_cm=20,
+                        depth_cm=20,
+                        height_cm=60,
+                        evidence=data["message"],
+                    )
+                ],
+                passenger_count=2,
+                passenger_evidence="두 명",
+            )
+        return intent(
+            item_changes=[
+                change(
+                    operation="UPDATE",
+                    item_id=data["plan"]["items"][0]["item_id"],
+                    quantity=2,
+                    evidence=data["message"],
+                )
+            ]
+        )
+
+    monkeypatch.setattr(ResponsesClient, "call_function", interpret)
+    context = {"scenario": "CHECK_ITEM", "vehicle_id": "avante_demo", "cargo_state": "EMPTY"}
+    first = _post(
+        ai_client,
+        "/api/v1/ai/messages",
+        message(
+            message="두 명이 타고 의자를 가져갈게. 크기는 20, 20, 60cm야",
+            context=context,
+        ).model_dump(mode="json"),
+    )
+    assert first.status_code == 200, first.text
+    first_data = first.json()["data"]
+    assert first_data["status"] == "NEEDS_INPUT"
+    conversation = model_session.get(AiConversation, UUID(first_data["conversation_id"]))
+    assert conversation.state["plan"]["items"][0]["quantity"] is None
+    model_session.commit()
+
+    payload = message(
+        message="의자는 두 개야",
+        context=context,
+        conversation_id=first_data["conversation_id"],
+        conversation_version=first_data["conversation_version"],
+    ).model_dump(mode="json")
+    headers = {"Idempotency-Key": str(uuid4())}
+    response = ai_client.post("/api/v1/ai/messages", json=payload, headers=headers)
+    assert response.status_code == 200, response.text
+    result = response.json()["data"]
+    assert result["status"] == "READY", response.text
+    assert result["proposed_plan"]["items"][0]["quantity"] == 2
+    assert result["preview_id"] is not None
+    assert result["conversation_version"] == first_data["conversation_version"] + 1
+    assert model_session.scalar(select(func.count()).select_from(Plan)) == 0
+    model_session.commit()
+    assert (
+        ai_client.post("/api/v1/ai/messages", json=payload, headers=headers).json()
+        == response.json()
+    )
 
 
 @pytest.mark.integration
