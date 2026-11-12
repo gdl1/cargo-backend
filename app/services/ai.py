@@ -300,7 +300,11 @@ def _resolve_reference_changes(state: dict, intent: CargoIntent) -> list[ItemCha
         if change.operation in {"UPDATE", "REMOVE"} and change.item_id is None
     ]
     resolved = {index: [change] for index, change in enumerate(pending) if index not in unresolved}
-    if unresolved and (len(unresolved) == 1 or state.get("reference_single_step")):
+    known_ids = {str(change.item_id) for change in pending if change.item_id is not None}
+    if unresolved and (
+        state.get("reference_single_step")
+        or (len(unresolved) == 1 and not known_ids.intersection(selected))
+    ):
         index = unresolved[0]
         resolved[index] = [
             pending[index].model_copy(update={"item_id": UUID(item_id)}) for item_id in selected
@@ -309,7 +313,13 @@ def _resolve_reference_changes(state: dict, intent: CargoIntent) -> list[ItemCha
         candidates = [
             change
             for change in intent.item_changes
-            if change.operation in {"UPDATE", "REMOVE"} and str(change.item_id) in selected
+            if change.operation in {"UPDATE", "REMOVE"}
+            and str(change.item_id) in selected
+            and not any(
+                change.model_dump(exclude={"evidence"}) == original.model_dump(exclude={"evidence"})
+                for index, original in enumerate(pending)
+                if index not in unresolved
+            )
         ]
         for index in unresolved:
             original = pending[index]
@@ -329,7 +339,11 @@ def _resolve_reference_changes(state: dict, intent: CargoIntent) -> list[ItemCha
         matched_ids = {
             str(change.item_id) for index in unresolved for change in resolved.get(index, [])
         }
-        if len(resolved) != len(pending) or candidates or matched_ids != set(selected):
+        if (
+            len(resolved) != len(pending)
+            or candidates
+            or matched_ids | known_ids.intersection(selected) != set(selected)
+        ):
             state["reference_single_step"] = True
             state.pop("resolved_item_ids", None)
             return None

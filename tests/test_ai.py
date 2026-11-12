@@ -1,6 +1,6 @@
 import json
 from io import BytesIO
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -536,8 +536,8 @@ def test_resolving_references_preserves_known_targets_and_new_items():
         draft,
         intent(
             item_changes=[
-                unknown_changes[0].model_copy(update={"item_id": first}),
-                unknown_changes[1].model_copy(update={"item_id": second}),
+                unknown_changes[0].model_copy(update={"item_id": UUID(first)}),
+                unknown_changes[1].model_copy(update={"item_id": UUID(second)}),
             ]
         ),
         "선택한 짐이에요",
