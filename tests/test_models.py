@@ -89,6 +89,11 @@ class TestPostgresqlModels:
             "calculation",
             "arrangement",
             "placement",
+            "saved_item",
+            "calculation_preview",
+            "operation_receipt",
+            "ai_conversation",
+            "product_candidate",
         }
         assert set(inspect(connection).get_table_names()) - {"alembic_version"} == expected
         command.downgrade(config, "base")
@@ -133,6 +138,11 @@ class TestPostgresqlModels:
         assert plan.retained_seats == []
         assert plan.idempotency_key is None
         assert plan.request_hash is None
+        assert plan.revision == 1
+        assert plan.passenger_seats is None
+        assert plan.items[0].is_active is True
+        assert plan.items[0].required_quantity == 0
+        assert set(plan.items[0].allowed_orientations) == {"WDH", "WHD", "DWH", "DHW", "HWD", "HDW"}
 
     def test_idempotency_key_unique_for_each_user(
         self, model_session: Session, stored_plan: Plan

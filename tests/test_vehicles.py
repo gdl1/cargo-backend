@@ -13,33 +13,16 @@ from app.db.seed import seed_vehicles
 from app.db.session import get_db
 from app.main import create_app
 from app.models import Plan, Vehicle
+from app.services.vehicles import get_vehicle_catalog
 
 VEHICLE_SUMMARY = {
     "vehicle_id": "avante_demo",
     "name": "아반떼 데모",
     "seat_capacity": 5,
-    "data_version": "avante-demo-v1",
+    "data_version": "avante-demo-v2",
     "data_source": "DUMMY",
 }
-VEHICLE_DETAIL = {
-    **VEHICLE_SUMMARY,
-    "seat_codes": [
-        "ROW_1_LEFT",
-        "ROW_1_RIGHT",
-        "ROW_2_LEFT",
-        "ROW_2_CENTER",
-        "ROW_2_RIGHT",
-    ],
-    "driver_seat": "ROW_1_LEFT",
-    "fold_segments": [],
-    "packing_profiles": [
-        {
-            "target_folded_segments": [],
-            "packing_space": {"width_cm": 97, "depth_cm": 82, "height_cm": 42},
-        }
-    ],
-    "opening": {"width_cm": 99, "height_cm": 41.5},
-}
+VEHICLE_DETAIL = get_vehicle_catalog()["avante_demo"].model_dump(mode="json")
 NOT_FOUND = {"code": "VEHICLE_NOT_FOUND", "message": "차량을 찾을 수 없습니다.", "data": None}
 
 

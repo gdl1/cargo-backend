@@ -42,39 +42,40 @@ def folding_vehicle_data() -> dict[str, Any]:
     }
 
 
-def test_avante_data_matches_documented_trunk_only_model() -> None:
+def test_avante_data_has_versioned_demo_spaces_and_all_fold_combinations() -> None:
     catalog = get_vehicle_catalog()
     assert set(catalog) == {"avante_demo"}
-    assert json.loads(catalog["avante_demo"].model_dump_json()) == {
-        "vehicle_id": "avante_demo",
-        "name": "아반떼 데모",
-        "data_version": "avante-demo-v1",
-        "data_source": "DUMMY",
-        "seat_capacity": 5,
-        "seat_codes": [
-            "ROW_1_LEFT",
+    vehicle = catalog["avante_demo"]
+    assert vehicle.data_version == "avante-demo-v2"
+    assert vehicle.data_source == "DUMMY"
+    assert vehicle.seat_capacity == 5
+    assert vehicle.driver_seat == "ROW_1_LEFT"
+    assert {segment.code: segment.seat_codes for segment in vehicle.fold_segments} == {
+        "DEMO_REAR_LEFT": ("ROW_2_LEFT", "ROW_2_CENTER"),
+        "DEMO_REAR_RIGHT": ("ROW_2_RIGHT",),
+        "DEMO_FRONT_RIGHT": ("ROW_1_RIGHT",),
+    }
+    assert len(vehicle.packing_profiles) == 8
+    assert len({profile.target_folded_segments for profile in vehicle.packing_profiles}) == 8
+    for profile in vehicle.packing_profiles:
+        assert profile.packing_space is None
+        trunk = next(space for space in profile.spaces if space.space_id == "TRUNK")
+        assert (trunk.width_cm, trunk.depth_cm, trunk.height_cm) == (97, 82, 42)
+        assert all(space.data_source == "DUMMY" for space in profile.spaces)
+        assert {seat for space in profile.spaces for seat in space.seat_codes} == {
             "ROW_1_RIGHT",
             "ROW_2_LEFT",
             "ROW_2_CENTER",
             "ROW_2_RIGHT",
-        ],
-        "driver_seat": "ROW_1_LEFT",
-        "fold_segments": [],
-        "packing_profiles": [
-            {
-                "target_folded_segments": [],
-                "packing_space": {"width_cm": 97, "depth_cm": 82, "height_cm": 42},
-            }
-        ],
-        "opening": {"width_cm": 99, "height_cm": 41.5},
-    }
+        }
 
 
 def test_decimal_dimensions_are_json_numbers() -> None:
     payload = json.loads(get_vehicle_catalog()["avante_demo"].model_dump_json())
     assert type(payload["opening"]["height_cm"]) is float
     assert payload["opening"]["height_cm"] == 41.5
-    for value in payload["packing_profiles"][0]["packing_space"].values():
+    for key in ("width_cm", "depth_cm", "height_cm"):
+        value = payload["packing_profiles"][0]["spaces"][0][key]
         assert type(value) in (int, float)
 
 
@@ -83,7 +84,7 @@ def test_vehicle_and_nested_values_are_immutable() -> None:
     with pytest.raises(ValidationError, match="frozen_instance"):
         vehicle.name = "변경한 이름"
     with pytest.raises(ValidationError, match="frozen_instance"):
-        vehicle.packing_profiles[0].packing_space.width_cm = 1
+        vehicle.packing_profiles[0].spaces[0].width_cm = 1
     with pytest.raises(ValidationError, match="frozen_instance"):
         vehicle.seat_codes += ("ROW_3_LEFT",)
     assert isinstance(vehicle.seat_codes, tuple)
@@ -224,7 +225,15 @@ def test_invalid_car_seats_rejected(
 
 
 @pytest.mark.parametrize("passenger_count", [1, 2, 3, 4, 5])
-def test_avante_has_no_folding_recommendation(passenger_count: int) -> None:
+def test_demo_folding_preserves_required_passenger_capacity(passenger_count: int) -> None:
     vehicle = get_vehicle_catalog()["avante_demo"]
     profiles = get_compatible_profiles(vehicle, passenger_count)
-    assert [profile.target_folded_segments for profile in profiles] == [()]
+    assert profiles[0].target_folded_segments == ()
+    segments = {segment.code: set(segment.seat_codes) for segment in vehicle.fold_segments}
+    for profile in profiles:
+        folded_seats = set().union(*(segments[code] for code in profile.target_folded_segments))
+        assert len(vehicle.seat_codes) - len(folded_seats) >= passenger_count
+    if passenger_count == 5:
+        assert len(profiles) == 1
+    if passenger_count == 1:
+        assert len(profiles) == 8
