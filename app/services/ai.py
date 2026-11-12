@@ -710,6 +710,18 @@ def respond(
             attaching_plan = (
                 state["context"].get("plan_id") is None and context["plan_id"] is not None
             )
+            attaching_base = (
+                state["context"]["scenario"] == "CHECK_ITEM"
+                and state["context"]["cargo_state"] == "UNKNOWN"
+                and state["context"].get("base_calculation_id") is None
+                and state["context"].get("base_arrangement_id") is None
+                and context["cargo_state"] == "SELECTED_ARRANGEMENT"
+                and any(question["question_id"] == "cargo_state" for question in state["questions"])
+                and any(
+                    answer.question_id == "cargo_state" and answer.answer == "SELECTED_ARRANGEMENT"
+                    for answer in payload.answers
+                )
+            )
             for field in (
                 "scenario",
                 "vehicle_id",
@@ -724,6 +736,8 @@ def respond(
                     "base_calculation_id",
                     "base_arrangement_id",
                 }:
+                    continue
+                if attaching_base and field in {"base_calculation_id", "base_arrangement_id"}:
                     continue
                 if state["context"].get(field) != context.get(field):
                     _invalid("차량, 계획 또는 선택 배치가 바뀌면 새 대화로 시작해 주세요.")
