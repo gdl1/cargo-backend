@@ -449,3 +449,76 @@ def test_selected_arrangement_does_not_modify_input_and_replay_is_stable(
     assert retry.json() == selected.json()
     current = client.get(path).json()["data"]
     assert current["revision"] == 2 and current["selected_arrangement_id"] is None
+
+
+@pytest.mark.integration
+def test_selection_rejects_old_vehicle_model_and_preserves_current_layout(
+    client: TestClient, model_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.vehicles import get_vehicle_catalog
+
+    original = create(
+        client,
+        model_session,
+        {
+            **PLAN,
+            "items": [
+                {"name": "상자", "width_cm": 10, "depth_cm": 10, "height_cm": 10, "quantity": 1}
+            ],
+        },
+    )
+    path = f"/api/v1/plans/{original['plan_id']}"
+    old_response = client.post(f"{path}/calculations", json={}, headers=headers())
+    assert old_response.status_code == 201, old_response.text
+    old = old_response.json()["data"]
+    vehicle = get_vehicle_catalog()[original["vehicle_id"]].model_copy(
+        update={"data_version": "avante-demo-updated"}
+    )
+    monkeypatch.setattr("app.services.vehicles._load_vehicle_data", lambda: (vehicle,))
+    current_response = client.post(f"{path}/calculations", json={}, headers=headers())
+    assert current_response.status_code == 201, current_response.text
+    current = current_response.json()["data"]
+    assert current["vehicle_data_version"] != old["vehicle_data_version"]
+    current_selection = {
+        "expected_revision": 1,
+        "calculation_id": current["calculation_id"],
+        "arrangement_id": current["arrangements"][0]["arrangement_id"],
+    }
+    selected = client.put(f"{path}/selection", json=current_selection, headers=headers())
+    assert selected.status_code == 200, selected.text
+    failed_key = uuid4()
+    stale = client.put(
+        f"{path}/selection",
+        json={
+            "expected_revision": 1,
+            "calculation_id": old["calculation_id"],
+            "arrangement_id": old["arrangements"][0]["arrangement_id"],
+        },
+        headers=headers(failed_key),
+    )
+    assert stale.status_code == 409, stale.text
+    assert stale.json()["code"] == "BASE_LAYOUT_STALE"
+    read = client.get(path).json()["data"]
+    assert read["selected_calculation_id"] == current["calculation_id"]
+    assert read["selected_arrangement_id"] == current_selection["arrangement_id"]
+    assert read["revision"] == 1 and read["items"] == original["items"]
+    assert (
+        model_session.scalar(select(OperationReceipt).where(OperationReceipt.key == failed_key))
+        is None
+    )
+    model_session.rollback()
+    retry = client.put(f"{path}/selection", json=current_selection, headers=headers(failed_key))
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == selected.json()
+    kept = client.post(
+        f"{path}/calculations",
+        json={
+            "packing_mode": "KEEP_EXISTING",
+            "cargo_state": "SELECTED_ARRANGEMENT",
+            "base_calculation_id": current["calculation_id"],
+            "base_arrangement_id": current_selection["arrangement_id"],
+        },
+        headers=headers(),
+    )
+    assert kept.status_code == 201, kept.text
+    assert kept.json()["data"]["result_code"] == "LAYOUT_FOUND"

@@ -567,6 +567,8 @@ def update_metadata(
 def select_arrangement(
     session: Session, payload: PlanSelection, user_id: str, plan_id: UUID, key: UUID
 ) -> PlanSelectionData:
+    from app.services.calculations import vehicle_snapshot
+
     scope = f"/api/v1/plans/{plan_id}/selection"
     with session.begin():
         replay = replay_request(session, user_id, scope, key, payload)
@@ -593,6 +595,11 @@ def select_arrangement(
         )
         if not valid:
             raise AppError(422, "INVALID_ARRANGEMENT_SELECTION", "선택할 수 없는 배치안입니다.")
+        vehicle = vehicle_snapshot(plan.vehicle_id)
+        if result.get("vehicle_data_version") != vehicle["data_version"]:
+            raise AppError(
+                409, "BASE_LAYOUT_STALE", "차량 정보가 변경되었습니다. 다시 계산해 주세요."
+            )
         plan.selected_calculation_id = payload.calculation_id
         plan.selected_arrangement_id = payload.arrangement_id
         session.flush()
