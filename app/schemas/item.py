@@ -25,6 +25,7 @@ class ItemCreate(PlanSchema):
     transport_state: TransportState = "UNKNOWN"
     dimension_source: Literal["AR", "MANUAL", "PRODUCT_SOURCE", "UNSPECIFIED"] = "UNSPECIFIED"
     material: ShortText | None = None
+    is_favorite: bool = Field(default=False, strict=True)
 
     @field_validator("allowed_orientations")
     @classmethod
@@ -44,3 +45,7 @@ class ItemListData(PlanSchema):
     limit: int
     offset: int
     total: int = Field(ge=0)
+
+
+class ItemFavoriteUpdate(PlanSchema):
+    is_favorite: bool = Field(strict=True)
