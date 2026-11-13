@@ -73,6 +73,24 @@ def test_adjacent_spaces_can_share_a_boundary(space_vehicle: dict[str, Any]) -> 
     assert len(vehicle.packing_profiles[0].spaces) == 2
 
 
+def test_mixed_source_vehicle_cannot_be_marked_as_measured(
+    space_vehicle: dict[str, Any],
+) -> None:
+    space_vehicle["data_source"] = "MEASURED"
+    space_vehicle["packing_profiles"][0]["spaces"][0]["data_source"] = "MEASURED"
+    with pytest.raises(ValidationError, match="더미 공간"):
+        VehicleDetail.model_validate(space_vehicle)
+    space_vehicle["data_source"] = "DUMMY"
+    assert VehicleDetail.model_validate(space_vehicle).data_source == "DUMMY"
+
+
+def test_fully_measured_spaces_can_keep_measured_source(space_vehicle: dict[str, Any]) -> None:
+    space_vehicle["data_source"] = "MEASURED"
+    for space in space_vehicle["packing_profiles"][0]["spaces"]:
+        space["data_source"] = "MEASURED"
+    assert VehicleDetail.model_validate(space_vehicle).data_source == "MEASURED"
+
+
 @pytest.mark.parametrize("offset", [0, 0.1, 79.9])
 def test_overlapping_spaces_are_rejected(space_vehicle: dict[str, Any], offset: float) -> None:
     space_vehicle["packing_profiles"][0]["spaces"][1]["origin_cm"]["y_cm"] = offset

@@ -1,0 +1,741 @@
+{
+  "vehicle_id": "avante_demo",
+  "name": "아반떼 데모",
+  "data_version": "avante-demo-v3",
+  "data_source": "DUMMY",
+  "seat_capacity": 5,
+  "seat_codes": [
+    "ROW_1_LEFT",
+    "ROW_1_RIGHT",
+    "ROW_2_LEFT",
+    "ROW_2_CENTER",
+    "ROW_2_RIGHT"
+  ],
+  "driver_seat": "ROW_1_LEFT",
+  "fold_segments": [
+    {
+      "code": "DEMO_REAR_LEFT",
+      "seat_codes": [
+        "ROW_2_LEFT",
+        "ROW_2_CENTER"
+      ]
+    },
+    {
+      "code": "DEMO_REAR_RIGHT",
+      "seat_codes": [
+        "ROW_2_RIGHT"
+      ]
+    },
+    {
+      "code": "DEMO_FRONT_RIGHT",
+      "seat_codes": [
+        "ROW_1_RIGHT"
+      ]
+    }
+  ],
+  "packing_profiles": [
+    {
+      "profile_id": "DEMO_BASE",
+      "target_folded_segments": [],
+      "packing_space": null,
+      "spaces": [
+        {
+          "space_id": "TRUNK",
+          "kind": "TRUNK",
+          "width_cm": 97,
+          "depth_cm": 110,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 0,
+            "z_cm": 0
+          },
+          "seat_codes": [],
+          "opening": {
+            "width_cm": 99,
+            "height_cm": 41.5
+          },
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_LEFT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_LEFT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_CENTER_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 31,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_CENTER"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_RIGHT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 62,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "FRONT_RIGHT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 48,
+          "depth_cm": 45,
+          "height_cm": 60,
+          "origin_cm": {
+            "x_cm": 52,
+            "y_cm": 173,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_1_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        }
+      ]
+    },
+    {
+      "profile_id": "DEMO_REAR_LEFT_FOLDED",
+      "target_folded_segments": [
+        "DEMO_REAR_LEFT"
+      ],
+      "packing_space": null,
+      "spaces": [
+        {
+          "space_id": "TRUNK",
+          "kind": "TRUNK",
+          "width_cm": 97,
+          "depth_cm": 110,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 0,
+            "z_cm": 0
+          },
+          "seat_codes": [],
+          "opening": {
+            "width_cm": 99,
+            "height_cm": 41.5
+          },
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_LEFT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 61,
+          "depth_cm": 60,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_LEFT",
+            "ROW_2_CENTER"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_RIGHT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 62,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "FRONT_RIGHT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 48,
+          "depth_cm": 45,
+          "height_cm": 60,
+          "origin_cm": {
+            "x_cm": 52,
+            "y_cm": 173,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_1_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        }
+      ]
+    },
+    {
+      "profile_id": "DEMO_REAR_RIGHT_FOLDED",
+      "target_folded_segments": [
+        "DEMO_REAR_RIGHT"
+      ],
+      "packing_space": null,
+      "spaces": [
+        {
+          "space_id": "TRUNK",
+          "kind": "TRUNK",
+          "width_cm": 97,
+          "depth_cm": 110,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 0,
+            "z_cm": 0
+          },
+          "seat_codes": [],
+          "opening": {
+            "width_cm": 99,
+            "height_cm": 41.5
+          },
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_LEFT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_LEFT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_CENTER_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 31,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_CENTER"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_RIGHT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 30,
+          "depth_cm": 60,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 62,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "FRONT_RIGHT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 48,
+          "depth_cm": 45,
+          "height_cm": 60,
+          "origin_cm": {
+            "x_cm": 52,
+            "y_cm": 173,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_1_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        }
+      ]
+    },
+    {
+      "profile_id": "DEMO_FRONT_RIGHT_FOLDED",
+      "target_folded_segments": [
+        "DEMO_FRONT_RIGHT"
+      ],
+      "packing_space": null,
+      "spaces": [
+        {
+          "space_id": "TRUNK",
+          "kind": "TRUNK",
+          "width_cm": 97,
+          "depth_cm": 110,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 0,
+            "z_cm": 0
+          },
+          "seat_codes": [],
+          "opening": {
+            "width_cm": 99,
+            "height_cm": 41.5
+          },
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_LEFT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_LEFT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_CENTER_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 31,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_CENTER"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_RIGHT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 62,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "FRONT_RIGHT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 45,
+          "depth_cm": 70,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 52,
+            "y_cm": 173,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_1_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        }
+      ]
+    },
+    {
+      "profile_id": "DEMO_REAR_LEFT_REAR_RIGHT_FOLDED",
+      "target_folded_segments": [
+        "DEMO_REAR_LEFT",
+        "DEMO_REAR_RIGHT"
+      ],
+      "packing_space": null,
+      "spaces": [
+        {
+          "space_id": "TRUNK",
+          "kind": "TRUNK",
+          "width_cm": 97,
+          "depth_cm": 110,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 0,
+            "z_cm": 0
+          },
+          "seat_codes": [],
+          "opening": {
+            "width_cm": 99,
+            "height_cm": 41.5
+          },
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_LEFT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 61,
+          "depth_cm": 60,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_LEFT",
+            "ROW_2_CENTER"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_RIGHT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 30,
+          "depth_cm": 60,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 62,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "FRONT_RIGHT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 48,
+          "depth_cm": 45,
+          "height_cm": 60,
+          "origin_cm": {
+            "x_cm": 52,
+            "y_cm": 173,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_1_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        }
+      ]
+    },
+    {
+      "profile_id": "DEMO_REAR_LEFT_FRONT_RIGHT_FOLDED",
+      "target_folded_segments": [
+        "DEMO_REAR_LEFT",
+        "DEMO_FRONT_RIGHT"
+      ],
+      "packing_space": null,
+      "spaces": [
+        {
+          "space_id": "TRUNK",
+          "kind": "TRUNK",
+          "width_cm": 97,
+          "depth_cm": 110,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 0,
+            "z_cm": 0
+          },
+          "seat_codes": [],
+          "opening": {
+            "width_cm": 99,
+            "height_cm": 41.5
+          },
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_LEFT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 61,
+          "depth_cm": 60,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_LEFT",
+            "ROW_2_CENTER"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_RIGHT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 62,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "FRONT_RIGHT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 45,
+          "depth_cm": 70,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 52,
+            "y_cm": 173,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_1_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        }
+      ]
+    },
+    {
+      "profile_id": "DEMO_REAR_RIGHT_FRONT_RIGHT_FOLDED",
+      "target_folded_segments": [
+        "DEMO_REAR_RIGHT",
+        "DEMO_FRONT_RIGHT"
+      ],
+      "packing_space": null,
+      "spaces": [
+        {
+          "space_id": "TRUNK",
+          "kind": "TRUNK",
+          "width_cm": 97,
+          "depth_cm": 110,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 0,
+            "z_cm": 0
+          },
+          "seat_codes": [],
+          "opening": {
+            "width_cm": 99,
+            "height_cm": 41.5
+          },
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_LEFT_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_LEFT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_CENTER_SEAT",
+          "kind": "SEAT",
+          "width_cm": 30,
+          "depth_cm": 40,
+          "height_cm": 55,
+          "origin_cm": {
+            "x_cm": 31,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_CENTER"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_RIGHT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 30,
+          "depth_cm": 60,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 62,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "FRONT_RIGHT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 45,
+          "depth_cm": 70,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 52,
+            "y_cm": 173,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_1_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        }
+      ]
+    },
+    {
+      "profile_id": "DEMO_REAR_LEFT_REAR_RIGHT_FRONT_RIGHT_FOLDED",
+      "target_folded_segments": [
+        "DEMO_REAR_LEFT",
+        "DEMO_REAR_RIGHT",
+        "DEMO_FRONT_RIGHT"
+      ],
+      "packing_space": null,
+      "spaces": [
+        {
+          "space_id": "TRUNK",
+          "kind": "TRUNK",
+          "width_cm": 97,
+          "depth_cm": 110,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 0,
+            "z_cm": 0
+          },
+          "seat_codes": [],
+          "opening": {
+            "width_cm": 99,
+            "height_cm": 41.5
+          },
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_LEFT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 61,
+          "depth_cm": 60,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 0,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_LEFT",
+            "ROW_2_CENTER"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "REAR_RIGHT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 30,
+          "depth_cm": 60,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 62,
+            "y_cm": 110,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_2_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        },
+        {
+          "space_id": "FRONT_RIGHT_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 45,
+          "depth_cm": 70,
+          "height_cm": 50,
+          "origin_cm": {
+            "x_cm": 52,
+            "y_cm": 173,
+            "z_cm": 0
+          },
+          "seat_codes": [
+            "ROW_1_RIGHT"
+          ],
+          "opening": null,
+          "data_source": "DUMMY"
+        }
+      ]
+    }
+  ],
+  "opening": {
+    "width_cm": 99,
+    "height_cm": 41.5
+  }
+}
