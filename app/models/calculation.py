@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
     Numeric,
     Text,
     UniqueConstraint,
@@ -44,6 +45,8 @@ class Calculation(Base):
     )
     plan_id: Mapped[UUID] = mapped_column(ForeignKey("plan.plan_id", ondelete="CASCADE"))
     is_success: Mapped[bool]
+    plan_revision: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+    result_payload: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     # None은 현재 상태 미확인, []는 모든 구간이 펴져 있음을 확인한 상태입니다.
     current_folded_segments: Mapped[list[str] | None] = mapped_column(
         MutableList.as_mutable(JSONB(none_as_null=True))

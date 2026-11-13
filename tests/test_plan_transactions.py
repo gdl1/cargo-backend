@@ -188,3 +188,68 @@ def test_simultaneous_clients_create_one_plan_with_same_key(
         assert retry.status_code == 200
         assert retry.json() == created.json()
     assert plan_counts(committed_engine) == (1, 1, 1, 1)
+
+
+def test_concurrent_updates_use_one_revision(committed_engine: Engine, settings: Settings) -> None:
+    apps = [create_app(settings) for _ in range(2)]
+    for app in apps:
+        use_independent_sessions(app, committed_engine)
+    barrier = Barrier(2)
+    with TestClient(apps[0]) as first, TestClient(apps[1]) as second:
+        original = first.post(
+            "/api/v1/plans", json=PLAN_INPUT, headers={"Idempotency-Key": str(uuid4())}
+        ).json()["data"]
+        path = f"/api/v1/plans/{original['plan_id']}"
+        plan_input = {
+            key: original[key]
+            for key in ("vehicle_id", "passenger_count", "car_seats", "retained_seats", "items")
+        }
+
+        def edit(client: TestClient, quantity: int):
+            payload = {**plan_input, "items": [{**plan_input["items"][0], "quantity": quantity}]}
+            barrier.wait(timeout=5)
+            return client.put(
+                path,
+                json={"expected_revision": 1, "plan": payload},
+                headers={"Idempotency-Key": str(uuid4())},
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(edit, first, 1), pool.submit(edit, second, 3)]
+            responses = [future.result(timeout=15) for future in futures]
+        assert sorted(response.status_code for response in responses) == [200, 409]
+        rejected = next(response for response in responses if response.status_code == 409)
+        assert rejected.json()["code"] == "PLAN_REVISION_CONFLICT"
+        assert first.get(path).json()["data"]["revision"] == 2
+
+
+def test_parallel_metadata_changes_preserve_distinct_fields(
+    committed_engine: Engine, settings: Settings
+) -> None:
+    apps = [create_app(settings) for _ in range(2)]
+    for app in apps:
+        use_independent_sessions(app, committed_engine)
+    barrier = Barrier(2)
+    with TestClient(apps[0]) as first, TestClient(apps[1]) as second:
+        original = first.post(
+            "/api/v1/plans", json=PLAN_INPUT, headers={"Idempotency-Key": str(uuid4())}
+        ).json()["data"]
+        path = f"/api/v1/plans/{original['plan_id']}"
+
+        def edit(client: TestClient, fields: dict):
+            barrier.wait(timeout=5)
+            return client.patch(
+                f"{path}/metadata",
+                json={"expected_revision": 1, **fields},
+                headers={"Idempotency-Key": str(uuid4())},
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(edit, first, {"name": "새 이름"}),
+                pool.submit(edit, second, {"is_favorite": True}),
+            ]
+            responses = [future.result(timeout=15) for future in futures]
+        assert [response.status_code for response in responses] == [200, 200]
+        final = first.get(path).json()["data"]
+        assert final["revision"] == 1 and final["name"] == "새 이름" and final["is_favorite"]

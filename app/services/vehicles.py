@@ -8,7 +8,7 @@ from app.schemas.vehicle import PackingProfile, SeatCode, VehicleDetail
 
 @lru_cache(maxsize=1)
 def _load_vehicle_data() -> tuple[VehicleDetail, ...]:
-    path = files("app.data.vehicles").joinpath("avante-demo-v1.json")
+    path = files("app.data.vehicles").joinpath("avante-demo-v2.json")
     vehicle = VehicleDetail.model_validate(json.loads(path.read_text(encoding="utf-8")))
     return (vehicle,)
 

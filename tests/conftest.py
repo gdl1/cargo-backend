@@ -30,6 +30,7 @@ def settings() -> Settings:
         postgres_db="cargo_unit_test",
         db_connect_timeout=1,
         db_statement_timeout_ms=1000,
+        openai_api_key=None,
     )
 
 

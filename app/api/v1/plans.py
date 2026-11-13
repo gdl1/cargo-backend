@@ -1,16 +1,34 @@
 import re
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Response
-from pydantic import BeforeValidator
+from pydantic import AfterValidator, BeforeValidator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user_id
 from app.db.session import get_db
 from app.schemas.common import ApiResponse, ErrorResponse
-from app.schemas.plan import PlanCreate, PlanData, PlanListData
-from app.services.plans import create_plan, get_plan, list_plans
+from app.schemas.plan import (
+    PlanCategory,
+    PlanCreate,
+    PlanData,
+    PlanFromResult,
+    PlanListData,
+    PlanMetadataUpdate,
+    PlanSelection,
+    PlanSelectionData,
+    PlanUpdate,
+    require_database_text,
+)
+from app.services.plans import (
+    create_plan,
+    get_plan,
+    list_plans,
+    select_arrangement,
+    update_metadata,
+    update_plan,
+)
 
 router = APIRouter(prefix="/plans", tags=["적재 계획"])
 
@@ -35,7 +53,7 @@ def require_query_integer(value: object) -> object:
     },
 )
 def save_plan(
-    payload: PlanCreate,
+    payload: PlanCreate | PlanFromResult,
     response: Response,
     session: Annotated[Session, Depends(get_db)],
     user_id: Annotated[str, Depends(get_current_user_id)],
@@ -63,8 +81,14 @@ def read_plans(
     offset: Annotated[
         int, Query(ge=0, le=9223372036854775807), BeforeValidator(require_query_integer)
     ] = 0,
+    sort: Literal["latest", "favorite"] = "latest",
+    q: Annotated[str, Query(max_length=100), AfterValidator(require_database_text)] | None = None,
+    category: PlanCategory | None = None,
+    favorite: bool | None = None,
 ) -> ApiResponse[PlanListData]:
-    data = list_plans(session, user_id, limit, offset)
+    data = list_plans(
+        session, user_id, limit, offset, sort=sort, q=q, category=category, favorite=favorite
+    )
     return ApiResponse(code="SUCCESS", message="적재 계획 목록을 조회했습니다.", data=data)
 
 
@@ -85,3 +109,47 @@ def read_plan(
 ) -> ApiResponse[PlanData]:
     data = get_plan(session, user_id, plan_id)
     return ApiResponse(code="SUCCESS", message="적재 계획을 조회했습니다.", data=data)
+
+
+@router.put("/{plan_id}", response_model=ApiResponse[PlanData], summary="적재 계획 변경")
+def change_plan(
+    plan_id: UUID,
+    payload: PlanUpdate,
+    session: Annotated[Session, Depends(get_db)],
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    idempotency_key: Annotated[UUID, Header(alias="Idempotency-Key")],
+) -> ApiResponse[PlanData]:
+    data = update_plan(session, payload, user_id, plan_id, idempotency_key)
+    return ApiResponse(code="SUCCESS", message="적재 계획을 변경했습니다.", data=data)
+
+
+@router.patch(
+    "/{plan_id}/metadata",
+    response_model=ApiResponse[PlanData],
+    summary="계획 이름·분류·메모·즐겨찾기 변경",
+)
+def change_metadata(
+    plan_id: UUID,
+    payload: PlanMetadataUpdate,
+    session: Annotated[Session, Depends(get_db)],
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    idempotency_key: Annotated[UUID, Header(alias="Idempotency-Key")],
+) -> ApiResponse[PlanData]:
+    data = update_metadata(session, payload, user_id, plan_id, idempotency_key)
+    return ApiResponse(code="SUCCESS", message="계획 정보를 변경했습니다.", data=data)
+
+
+@router.put(
+    "/{plan_id}/selection",
+    response_model=ApiResponse[PlanSelectionData],
+    summary="사용할 배치 선택",
+)
+def choose_arrangement(
+    plan_id: UUID,
+    payload: PlanSelection,
+    session: Annotated[Session, Depends(get_db)],
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    idempotency_key: Annotated[UUID, Header(alias="Idempotency-Key")],
+) -> ApiResponse[PlanSelectionData]:
+    data = select_arrangement(session, payload, user_id, plan_id, idempotency_key)
+    return ApiResponse(code="SUCCESS", message="사용할 배치안을 선택했습니다.", data=data)

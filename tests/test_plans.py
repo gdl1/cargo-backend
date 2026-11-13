@@ -90,6 +90,16 @@ class TestPlanCreation:
             "items",
             "created_at",
             "latest_calculation_id",
+            "passenger_seats",
+            "revision",
+            "updated_at",
+            "selected_calculation_id",
+            "selected_arrangement_id",
+            "name",
+            "category",
+            "memo",
+            "is_favorite",
+            "favorited_at",
         }
         assert data["vehicle_id"] == "avante_demo"
         assert data["passenger_count"] == 1
@@ -99,7 +109,19 @@ class TestPlanCreation:
         assert datetime.fromisoformat(data["created_at"]).utcoffset() == timedelta(0)
         item_ids = [UUID(item["item_id"]) for item in data["items"]]
         assert len(set(item_ids)) == 3
-        expected_items = [{**item, "name": item["name"].strip()} for item in payload["items"]]
+        expected_items = [
+            {
+                **item,
+                "name": item["name"].strip(),
+                "required_quantity": 0,
+                "allowed_orientations": ["WDH", "WHD", "DWH", "DHW", "HWD", "HDW"],
+                "transport_state": "UNKNOWN",
+                "dimension_source": "UNSPECIFIED",
+                "material": None,
+                "saved_item_id": None,
+            }
+            for item in payload["items"]
+        ]
         assert [
             {key: value for key, value in item.items() if key != "item_id"}
             for item in data["items"]

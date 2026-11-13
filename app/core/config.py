@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     postgres_db: str = "cargo"
     db_connect_timeout: int = Field(default=3, ge=1, le=30)
     db_statement_timeout_ms: int = Field(default=5000, ge=100, le=60000)
+    calculation_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    calculation_max_candidates: int = Field(default=20, ge=1, le=100)
+    preview_ttl_seconds: int = Field(default=600, ge=30, le=86400)
+    openai_api_key: SecretStr | None = None
+    openai_model: str = "gpt-6.1-terra"
+    llm_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    llm_max_output_tokens: int = Field(default=4000, ge=256, le=16000)
 
     @field_validator("postgres_password")
     @classmethod

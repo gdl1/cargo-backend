@@ -46,10 +46,17 @@ def register_exception_handlers(app: FastAPI) -> None:
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         # 원본 입력값과 내부 예외 문맥은 응답에 넣지 않습니다.
-        details = [
-            {"loc": list(error["loc"]), "type": error["type"], "message": error["msg"]}
-            for error in exc.errors()
-        ]
+        details = []
+        for error in exc.errors():
+            location = list(error["loc"])
+            if (
+                len(location) > 1
+                and location[0] == "body"
+                and location[1]
+                in {"PlanCreate", "PlanFromResult", "PlanUpdate", "PlanUpdateFromResult"}
+            ):
+                location.pop(1)
+            details.append({"loc": location, "type": error["type"], "message": error["msg"]})
         return JSONResponse(
             status_code=422,
             content=ErrorResponse(
