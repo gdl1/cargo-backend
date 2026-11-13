@@ -27,6 +27,31 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-6.1-terra"
     llm_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     llm_max_output_tokens: int = Field(default=4000, ge=256, le=16000)
+    notification_api_key: SecretStr | None = None
+    firebase_project_id: str = ""
+    google_application_credentials: str = ""
+    push_http_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    push_retry_delay_seconds: int = Field(default=60, ge=60, le=3600)
+    notification_event_max_age_seconds: int = Field(default=600, ge=60, le=3600)
+
+    @field_validator("notification_api_key")
+    @classmethod
+    def notification_key_must_be_strong(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None or value.get_secret_value() == "":
+            return None
+        secret = value.get_secret_value()
+        if len(secret) < 32 or not secret.isascii() or any(c.isspace() for c in secret):
+            raise ValueError("NOTIFICATION_API_KEY는 공백 없는 ASCII 32자 이상이어야 합니다.")
+        return value
+
+    @field_validator("firebase_project_id")
+    @classmethod
+    def firebase_project_id_must_be_safe(cls, value: str) -> str:
+        import re
+
+        if value and not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", value):
+            raise ValueError("Firebase 프로젝트 ID 형식을 확인해 주세요.")
+        return value
 
     @field_validator("postgres_password")
     @classmethod

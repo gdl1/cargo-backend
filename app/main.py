@@ -9,6 +9,7 @@ from app.api.router import api_router
 from app.core.config import Settings
 from app.core.exceptions import register_exception_handlers
 from app.db.session import build_engine
+from app.services.push import PushSender
 from app.services.vehicles import get_vehicle_catalog
 
 
@@ -19,6 +20,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         get_vehicle_catalog()
         engine = build_engine(config)
         application.state.settings = config
+        application.state.push_sender = PushSender(config)
         application.state.engine = engine
         application.state.session_factory = sessionmaker(bind=engine, expire_on_commit=False)
         try:

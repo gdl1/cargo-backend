@@ -31,6 +31,9 @@ def settings() -> Settings:
         db_connect_timeout=1,
         db_statement_timeout_ms=1000,
         openai_api_key=None,
+        notification_api_key=None,
+        firebase_project_id="",
+        google_application_credentials="",
     )
 
 

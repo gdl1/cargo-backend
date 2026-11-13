@@ -94,6 +94,9 @@ class TestPostgresqlModels:
             "operation_receipt",
             "ai_conversation",
             "product_candidate",
+            "push_device",
+            "cargo_reminder",
+            "push_delivery",
         }
         assert set(inspect(connection).get_table_names()) - {"alembic_version"} == expected
         command.downgrade(config, "base")
