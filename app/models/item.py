@@ -48,4 +48,5 @@ class SavedItem(Base):
     transport_state: Mapped[str] = mapped_column(Text)
     dimension_source: Mapped[str] = mapped_column(Text)
     material: Mapped[str | None] = mapped_column(Text)
+    is_favorite: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
