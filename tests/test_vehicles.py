@@ -19,7 +19,7 @@ VEHICLE_SUMMARY = {
     "vehicle_id": "avante_demo",
     "name": "아반떼 데모",
     "seat_capacity": 5,
-    "data_version": "avante-demo-v2",
+    "data_version": "avante-demo-v3",
     "data_source": "DUMMY",
 }
 VEHICLE_DETAIL = get_vehicle_catalog()["avante_demo"].model_dump(mode="json")

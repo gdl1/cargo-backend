@@ -20,7 +20,7 @@ from app.schemas.loading_guide import (
     LoadingGuideData,
     LoadingGuideStep,
 )
-from app.schemas.packing import MAX_UNITS
+from app.schemas.packing import MAX_UNITS, PackingProblem
 from app.services.calculations import owned_plan, result_payload
 from app.services.llm import LlmUnavailable, ResponsesClient
 from app.services.operations import (
@@ -29,6 +29,7 @@ from app.services.operations import (
     request_guard,
     save_response,
 )
+from app.services.packing import validate_packing
 
 SCOPE = "/ai/loading-guides"
 FALLBACK_REPLY = "위 그림을 보고 배치해 주세요."
@@ -112,6 +113,8 @@ def _load_context(session: Session, user_id: str, payload: LoadingGuideCreate) -
     ):
         raise _unavailable()
     spaces = {space["space_id"]: space for space in arrangement["packing_spaces"]}
+    if len(spaces) != len(arrangement["packing_spaces"]):
+        raise _unavailable()
     seen = set()
     for placement in placements:
         UUID(placement["placement_id"])
@@ -122,6 +125,15 @@ def _load_context(session: Session, user_id: str, payload: LoadingGuideCreate) -
         ):
             raise _unavailable()
         seen.add(placement["placement_id"])
+    # 최신 차량 모델을 섞지 않고 계산 당시 공간 안의 배치인지 다시 확인합니다.
+    validate_packing(
+        PackingProblem.model_validate(
+            {"spaces": list(spaces.values()), "items": list(items.values())}
+        ),
+        placements,
+        stacking_assessments=arrangement.get("stacking_assessments", []),
+        expected_units={(row["item_id"], row["unit_index"]) for row in placements},
+    )
     fixed_ids = set()
     if result["packing_mode"] == "KEEP_EXISTING":
         base = session.scalar(
@@ -150,6 +162,7 @@ def _load_context(session: Session, user_id: str, payload: LoadingGuideCreate) -
         if not fixed_ids <= identifiers:
             raise _unavailable()
     return {
+        "vehicle_data_version": result["vehicle_data_version"],
         "packing_mode": result["packing_mode"],
         "current_folded_segments": result.get("current_folded_segments"),
         "target_folded_segments": arrangement["target_folded_segments"],
@@ -245,6 +258,13 @@ def _generate(payload: LoadingGuideCreate, context: dict, settings: Settings) ->
             "각 placement_id에 대해 저장된 load_order를 order로 사용해 단계 하나씩 작성하세요. "
             "모든 배치를 빠짐없이 같은 순서로 포함하고 받침 관계나 배치를 바꾸지 마세요. "
             "저장된 물품, 공간, 좌표, 회전, 받침과 폴딩 조건을 읽기 쉬운 배치 안내로 설명하세요. "
+            "vehicle_data_version과 spaces는 계산 당시 모델입니다. "
+            "최신 차량 정보를 덧붙이지 마세요. "
+            "공간은 더미·추정값일 수 있으므로 실제 차량의 실측값으로 단정하지 마세요. "
+            "1차의 트렁크·후석 간격 0은 계산용 가정이며 실제 단차나 간격이 없다는 뜻이 아닙니다. "
+            "한 공간에 여러 짐을 놓을 수 있지만 짐 하나를 두 공간에 걸쳐 놓도록 안내하지 마세요. "
+            "등록된 공간과 폴딩 코드만 설명하고 6:4의 좌우 대응이나 폴딩 기능을 추측하지 마세요. "
+            "바닥부터 천장까지의 높이를 좌석 위 적재 높이로 바꾸어 설명하지 마세요. "
             "text는 해당 단계의 물품과 받침 짐만 설명하고 제외한 물품을 싣도록 하지 마세요. "
             "숫자는 그 단계의 저장된 값만 cm 단위로 사용하고 새 치수·회전 각도를 추정하지 마세요. "
             "좌표 원점은 각 공간의 뒤쪽·왼쪽·바닥이며 x는 오른쪽, y는 차량 앞쪽, z는 위쪽입니다. "

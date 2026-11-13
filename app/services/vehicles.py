@@ -8,7 +8,9 @@ from app.schemas.vehicle import PackingProfile, SeatCode, VehicleDetail
 
 @lru_cache(maxsize=1)
 def _load_vehicle_data() -> tuple[VehicleDetail, ...]:
-    path = files("app.data.vehicles").joinpath("avante-demo-v2.json")
+    # 공유 자료의 트렁크 깊이 110·높이 50cm와 조수석 방석 폭 48cm를 참고합니다.
+    # 나머지 치수·6:4 좌우 대응은 더미이며, 간격 0도 1차 계산용 가정입니다.
+    path = files("app.data.vehicles").joinpath("avante-demo-v3.json")
     vehicle = VehicleDetail.model_validate(json.loads(path.read_text(encoding="utf-8")))
     return (vehicle,)
 

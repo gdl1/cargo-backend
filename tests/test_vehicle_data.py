@@ -46,7 +46,7 @@ def test_avante_data_has_versioned_demo_spaces_and_all_fold_combinations() -> No
     catalog = get_vehicle_catalog()
     assert set(catalog) == {"avante_demo"}
     vehicle = catalog["avante_demo"]
-    assert vehicle.data_version == "avante-demo-v2"
+    assert vehicle.data_version == "avante-demo-v3"
     assert vehicle.data_source == "DUMMY"
     assert vehicle.seat_capacity == 5
     assert vehicle.driver_seat == "ROW_1_LEFT"
@@ -60,7 +60,7 @@ def test_avante_data_has_versioned_demo_spaces_and_all_fold_combinations() -> No
     for profile in vehicle.packing_profiles:
         assert profile.packing_space is None
         trunk = next(space for space in profile.spaces if space.space_id == "TRUNK")
-        assert (trunk.width_cm, trunk.depth_cm, trunk.height_cm) == (97, 82, 42)
+        assert (trunk.width_cm, trunk.depth_cm, trunk.height_cm) == (97, 110, 50)
         assert all(space.data_source == "DUMMY" for space in profile.spaces)
         assert {seat for space in profile.spaces for seat in space.seat_codes} == {
             "ROW_1_RIGHT",

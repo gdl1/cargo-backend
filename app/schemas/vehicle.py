@@ -237,6 +237,10 @@ class VehicleDetail(VehicleSummary):
                 known_spaces[space.space_id] = space
         if frozenset() not in combinations:
             raise ValueError("접지 않은 기본 트렁크 조합이 필요합니다.")
+        if self.data_source == "MEASURED" and any(
+            space.data_source == "DUMMY" for space in known_spaces.values()
+        ):
+            raise ValueError("더미 공간이 포함된 차량은 실측 모델로 표시할 수 없습니다.")
         return self
 
 

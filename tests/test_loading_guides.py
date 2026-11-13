@@ -1,6 +1,7 @@
 import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from importlib.resources import files
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -13,8 +14,10 @@ from app.db.session import get_db
 from app.models import Calculation, Plan
 from app.models.operation import OperationReceipt
 from app.models.preview import CalculationPreview
+from app.schemas.vehicle import VehicleDetail
 from app.services.llm import LlmUnavailable, ResponsesClient
 from app.services.operations import request_guard
+from app.services.vehicles import get_vehicle_catalog
 
 pytestmark = pytest.mark.integration
 PATH = "/api/v1/ai/loading-guides"
@@ -136,6 +139,37 @@ def test_guide_uses_historical_item_snapshot_after_plan_edit(guide_app):
     sent = json.dumps(calls[0]["data"], ensure_ascii=False)
     assert "운반 상자" in sent
     assert "현재 바뀐 짐" not in sent
+
+
+@pytest.mark.parametrize("kind", ["saved", "preview"])
+def test_guide_keeps_historical_vehicle_geometry_after_catalog_update(guide_app, kind):
+    app = guide_app
+    legacy = VehicleDetail.model_validate_json(
+        files("app.data.vehicles").joinpath("avante-demo-v2.json").read_text(encoding="utf-8")
+    )
+    app.monkeypatch.setattr(
+        "app.services.calculations.get_vehicle_catalog", lambda: {legacy.vehicle_id: legacy}
+    )
+    reference, calculation, candidate = source(app, kind)
+    assert calculation["vehicle_data_version"] == "avante-demo-v2"
+    current = get_vehicle_catalog()[legacy.vehicle_id].model_dump(mode="json")
+    current["data_version"] = "avante-demo-v3"
+    for profile in current["packing_profiles"]:
+        for space in profile["spaces"]:
+            space["origin_cm"]["x_cm"] += 500
+    updated = VehicleDetail.model_validate(current)
+    app.monkeypatch.setattr(
+        "app.services.calculations.get_vehicle_catalog", lambda: {updated.vehicle_id: updated}
+    )
+    calls = install_model(app, candidate)
+    response = post(app.client, PATH, reference)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["source"] == "AI"
+    assert calls[0]["data"]["vehicle_data_version"] == "avante-demo-v2"
+    assert calls[0]["data"]["spaces"] == candidate["packing_spaces"]
+    assert calls[0]["data"]["placements"] == sorted(
+        candidate["placements"], key=lambda row: row["load_order"]
+    )
 
 
 def test_guide_accepts_requested_exclusion_alternative(guide_app):
@@ -375,6 +409,54 @@ def test_corrupt_support_relationship_is_rejected_before_model(guide_app, suppor
     assert calls == []
 
 
+@pytest.mark.parametrize("kind", ["saved", "preview"])
+@pytest.mark.parametrize("damage", ["outside_space", "cross_space_support"])
+def test_guide_rejects_geometry_outside_its_saved_space(guide_app, kind, damage):
+    app = guide_app
+    reference, calculation, candidate = source(app, kind)
+    value = deepcopy(calculation)
+    arrangement = value["arrangements"][0]
+    first, second = sorted(arrangement["placements"], key=lambda p: p["load_order"])
+    original_space = next(
+        space for space in arrangement["packing_spaces"] if space["space_id"] == first["space_id"]
+    )
+    if damage == "outside_space":
+        first["y_cm"] = original_space["depth_cm"]
+    else:
+        adjacent_space = deepcopy(original_space)
+        adjacent_space["space_id"] = "ADJACENT_SPACE"
+        adjacent_space["origin_cm"]["y_cm"] += original_space["depth_cm"]
+        arrangement["packing_spaces"].append(adjacent_space)
+        second.update(
+            space_id=adjacent_space["space_id"],
+            x_cm=first["x_cm"],
+            y_cm=first["y_cm"],
+            z_cm=10,
+            supporting_placement_ids=[first["placement_id"]],
+        )
+        arrangement["stacking_assessments"] = [
+            {
+                "lower_item_id": first["item_id"],
+                "upper_item_id": second["item_id"],
+                "allowed": True,
+                "basis": "LLM_ESTIMATE",
+                "reason": "모의 쌓기 추정",
+            }
+        ]
+    with app.session.begin():
+        row = (
+            app.session.get(Calculation, UUID(reference["calculation_id"]))
+            if kind == "saved"
+            else app.session.get(CalculationPreview, UUID(reference["preview_id"]))
+        )
+        row.result_payload = value
+    calls = install_model(app, candidate)
+    response = post(app.client, PATH, reference)
+    assert response.status_code == 503
+    assert response.json()["code"] == "CALCULATION_RESULT_UNAVAILABLE"
+    assert calls == []
+
+
 def test_source_changing_during_generation_does_not_save_old_guide(guide_app):
     app = guide_app
     reference, calculation, candidate = source(app, "preview")
@@ -383,7 +465,7 @@ def test_source_changing_during_generation_does_not_save_old_guide(guide_app):
         with app.session.begin():
             row = app.session.get(CalculationPreview, UUID(reference["preview_id"]))
             value = deepcopy(calculation)
-            value["arrangements"][0]["placements"][0]["x_cm"] += 1
+            value["arrangements"][0]["packing_spaces"][0]["origin_cm"]["x_cm"] += 1
             row.result_payload = value
 
     install_model(app, candidate, side_effect=change_source)
