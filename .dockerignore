@@ -1,0 +1,17 @@
+**
+!Dockerfile
+!requirements.txt
+!alembic.ini
+!app/
+!app/**
+!alembic/
+!alembic/**
+**/__pycache__/
+**/*.pyc
+**/.env*
+**/*.json
+!app/data/vehicles/*.json
+**/*.pem
+**/*.key
+**/*firebase-adminsdk*.json
+**/service-account*.json
