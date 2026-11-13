@@ -224,3 +224,6 @@ __marimo__/
 !.env.example
 *.db
 
+# 서버용 Firebase 인증 파일
+*firebase-adminsdk*.json
+service-account*.json

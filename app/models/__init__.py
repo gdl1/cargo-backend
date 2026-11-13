@@ -1,6 +1,7 @@
 from app.models.ai import AiConversation, ProductCandidate
 from app.models.calculation import Arrangement, Calculation, Placement
 from app.models.item import SavedItem
+from app.models.notification import CargoReminder, PushDelivery, PushDevice
 from app.models.operation import OperationReceipt
 from app.models.plan import Plan, PlanCarSeat, PlanItem, PlanRetainedSeat
 from app.models.preview import CalculationPreview
@@ -11,6 +12,7 @@ __all__ = [
     "Arrangement",
     "Calculation",
     "CalculationPreview",
+    "CargoReminder",
     "OperationReceipt",
     "Placement",
     "Plan",
@@ -18,6 +20,8 @@ __all__ = [
     "PlanItem",
     "PlanRetainedSeat",
     "ProductCandidate",
+    "PushDelivery",
+    "PushDevice",
     "SavedItem",
     "Vehicle",
 ]
