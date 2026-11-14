@@ -8,7 +8,14 @@ from pydantic import ValidationError
 
 from app.core.exceptions import AppError
 from app.schemas.packing import MAX_UNITS, ORIENTATIONS, PackingItem, PackingProblem
-from app.services.packing import SearchBudget, SearchLimit, find_layout, validate_packing
+from app.services.packing import (
+    SearchBudget,
+    SearchLimit,
+    find_layout,
+    placement_space_ids,
+    validate_packing,
+)
+from app.services.vehicles import SPACE_SNAPSHOT_FIELDS, space_matches_snapshot
 
 
 def _error(code: str, message: str, status: int = 422) -> AppError:
@@ -67,21 +74,6 @@ def normalize_vehicle_state(
     return seats, folds, occupied_result, folded_result
 
 
-def _space_signature(space: dict) -> tuple:
-    return tuple(
-        space.get(field)
-        for field in (
-            "space_id",
-            "kind",
-            "width_cm",
-            "depth_cm",
-            "height_cm",
-            "origin_cm",
-            "seat_codes",
-        )
-    )
-
-
 def _fixed(plan: dict, base: dict | None, request: dict) -> list[dict]:
     if request.get("packing_mode", "REPACK_ALL") != "KEEP_EXISTING":
         return []
@@ -124,6 +116,7 @@ def _rank(candidate: dict) -> tuple:
                 row["item_id"],
                 row["unit_index"],
                 row["space_id"],
+                row.get("spanning_space_id", ""),
                 row["x_cm"],
                 row["y_cm"],
                 row["z_cm"],
@@ -240,7 +233,7 @@ def recommend(
         vehicle["seat_codes"]
     ):
         raise _error("VALIDATION_ERROR", "차량 좌석이나 탑승 인원을 확인해 주세요.")
-    fixed_spaces = {row["space_id"] for row in fixed}
+    fixed_spaces = {space_id for row in fixed for space_id in placement_space_ids(row)}
     base_spaces = {
         row["space_id"]: row for row in (base_arrangement or {}).get("packing_spaces", [])
     }
@@ -330,7 +323,7 @@ def recommend(
             if fixed and any(
                 space_id not in by_space
                 or space_id not in base_spaces
-                or _space_signature(by_space[space_id]) != _space_signature(base_spaces[space_id])
+                or not space_matches_snapshot(by_space[space_id], base_spaces[space_id])
                 for space_id in fixed_spaces
             ):
                 continue
@@ -415,7 +408,11 @@ def recommend(
                 target = sorted(profile["target_folded_segments"])
                 changes = len(set(folded) ^ set(target)) if folded is not None else None
                 kinds = {space["space_id"]: space["kind"] for space in spaces}
-                in_trunk = all(kinds[row["space_id"]] == "TRUNK" for row in placements)
+                in_trunk = all(
+                    kinds[space_id] == "TRUNK"
+                    for row in placements
+                    for space_id in placement_space_ids(row)
+                )
                 excluded = all_units - selected
                 reasons = ["FEWER_EXCLUSIONS"] if excluded else []
                 if changes is not None:
@@ -435,20 +432,7 @@ def recommend(
                     else None,
                     "profile_id": profile.get("profile_id", "TRUNK_ONLY"),
                     "packing_spaces": [
-                        {
-                            key: value
-                            for key, value in space.items()
-                            if key
-                            in {
-                                "space_id",
-                                "kind",
-                                "width_cm",
-                                "depth_cm",
-                                "height_cm",
-                                "origin_cm",
-                                "seat_codes",
-                            }
-                        }
+                        {key: space[key] for key in SPACE_SNAPSHOT_FIELDS if key in space}
                         for space in spaces
                     ],
                     "score": None,
@@ -490,7 +474,7 @@ def recommend(
                     stacking_assessments=assessments,
                 )
                 if placements:
-                    used = {row["space_id"] for row in placements}
+                    used = {space_id for row in placements for space_id in placement_space_ids(row)}
                     unknown_seats = folding_seats | {
                         seat
                         for space in spaces
@@ -615,7 +599,7 @@ def validate_candidate(
     selected_spaces = []
     for space in snapshots:
         known = known_spaces.get(space["space_id"])
-        if known is None or _space_signature(known) != _space_signature(space):
+        if known is None or not space_matches_snapshot(known, space):
             raise ValueError("차량 공간이 변경되었습니다.")
         if set(space.get("seat_codes", [])) & protected:
             raise ValueError("보호 좌석에 짐을 놓을 수 없습니다.")
@@ -646,6 +630,8 @@ def validate_candidate(
     )
     kinds = {space["space_id"]: space["kind"] for space in selected_spaces}
     if candidate["all_in_trunk"] != all(
-        kinds[row["space_id"]] == "TRUNK" for row in candidate["placements"]
+        kinds[space_id] == "TRUNK"
+        for row in candidate["placements"]
+        for space_id in placement_space_ids(row)
     ):
         raise ValueError("트렁크 적재 여부가 배치와 일치하지 않습니다.")

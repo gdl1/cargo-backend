@@ -4,7 +4,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.plan import PlanInputUpdate
-from app.schemas.vehicle import SeatCode
+from app.schemas.vehicle import Opening, SeatCode
 
 
 class CalculationSchema(BaseModel):
@@ -89,6 +89,8 @@ class SpaceSnapshot(SpaceDimensions):
     kind: Literal["TRUNK", "SEAT", "FOLDED_SEAT"]
     origin_cm: SpaceOrigin
     seat_codes: list[SeatCode]
+    opening: NotRequired[Opening | None]
+    connected_to_space_id: NotRequired[str]
 
 
 class PlacementData(TypedDict):
@@ -102,6 +104,7 @@ class PlacementData(TypedDict):
     orientation: Literal["WDH", "WHD", "DWH", "DHW", "HWD", "HDW"]
     load_order: PositiveInt
     supporting_placement_ids: list[ResponseId]
+    spanning_space_id: NotRequired[str]
     source_item_id: NotRequired[ResponseId]
     source_unit_index: NotRequired[PositiveInt]
 

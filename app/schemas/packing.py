@@ -3,7 +3,13 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.schemas.vehicle import Centimeters
+from app.schemas.vehicle import (
+    Centimeters,
+    Opening,
+    PositionedSpace,
+    SpaceOrigin,
+    validate_trunk_connections,
+)
 
 Orientation = Literal["WDH", "WHD", "DWH", "DHW", "HWD", "HDW"]
 ORIENTATIONS: tuple[Orientation, ...] = ("WDH", "WHD", "DWH", "DHW", "HWD", "HDW")
@@ -15,17 +21,21 @@ class PackingSchema(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
 
-class CargoOpening(PackingSchema):
+class CargoOpening(Opening):
+    model_config = PackingSchema.model_config
+
     width_cm: Dimension
     height_cm: Dimension
 
 
-class CargoSpace(PackingSchema):
-    space_id: str = Field(min_length=1)
+class CargoSpace(PositionedSpace):
+    model_config = PackingSchema.model_config
+
     kind: Literal["TRUNK", "SEAT", "FOLDED_SEAT"] = "TRUNK"
     width_cm: Dimension
     depth_cm: Dimension
     height_cm: Dimension
+    origin_cm: SpaceOrigin = SpaceOrigin(x_cm=0, y_cm=0, z_cm=0)
     opening: CargoOpening | None = None
 
 
@@ -59,6 +69,7 @@ class PackingProblem(PackingSchema):
             raise ValueError("짐 ID는 중복할 수 없습니다.")
         if len({space.space_id for space in self.spaces}) != len(self.spaces):
             raise ValueError("공간 ID는 중복할 수 없습니다.")
+        validate_trunk_connections(self.spaces)
         if sum(item.quantity for item in self.items) > MAX_UNITS:
             raise ValueError(f"계산할 짐은 최대 {MAX_UNITS}개입니다.")
         return self

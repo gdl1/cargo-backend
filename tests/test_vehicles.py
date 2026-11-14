@@ -23,6 +23,13 @@ VEHICLE_SUMMARY = {
     "data_source": "DUMMY",
 }
 VEHICLE_DETAIL = get_vehicle_catalog()["avante_demo"].model_dump(mode="json")
+TUCSON_SUMMARY = {
+    "vehicle_id": "tucson_hybrid",
+    "name": "투싼 하이브리드",
+    "seat_capacity": 5,
+    "data_version": "tucson-hybrid-v1",
+    "data_source": "DUMMY",
+}
 NOT_FOUND = {"code": "VEHICLE_NOT_FOUND", "message": "차량을 찾을 수 없습니다.", "data": None}
 
 
@@ -43,9 +50,9 @@ def vehicle_client(application: FastAPI, model_session: Session) -> Iterator[Tes
 @pytest.mark.integration
 class TestVehicleDatabase:
     def test_seed_is_repeatable_and_preserves_references(self, model_session: Session) -> None:
-        assert seed_vehicles(model_session) == 1
-        assert seed_vehicles(model_session) == 1
-        assert model_session.scalar(select(func.count()).select_from(Vehicle)) == 1
+        assert seed_vehicles(model_session) == 2
+        assert seed_vehicles(model_session) == 2
+        assert model_session.scalar(select(func.count()).select_from(Vehicle)) == 2
 
         vehicle = model_session.get(Vehicle, "avante_demo")
         vehicle.name = "이전 데모 이름"
@@ -57,7 +64,7 @@ class TestVehicleDatabase:
         seed_vehicles(model_session)
         model_session.flush()
         model_session.expire_all()
-        assert model_session.scalar(select(func.count()).select_from(Vehicle)) == 2
+        assert model_session.scalar(select(func.count()).select_from(Vehicle)) == 3
         assert model_session.get(Vehicle, "other_vehicle").name == "기존 차량"
         assert model_session.get(Plan, plan_id).vehicle_id == "avante_demo"
         assert model_session.get(Plan, plan_id).vehicle.name == "아반떼 데모"
@@ -86,7 +93,7 @@ class TestVehicleDatabase:
         assert response.json() == {
             "code": "SUCCESS",
             "message": "차량 목록을 조회했습니다.",
-            "data": {"vehicles": [VEHICLE_SUMMARY]},
+            "data": {"vehicles": [VEHICLE_SUMMARY, TUCSON_SUMMARY]},
         }
         response = vehicle_client.get("/api/v1/vehicles/avante_demo")
         assert response.status_code == 200
@@ -96,6 +103,11 @@ class TestVehicleDatabase:
             "data": VEHICLE_DETAIL,
         }
         assert isinstance(response.json()["data"]["opening"]["height_cm"], float)
+        response = vehicle_client.get("/api/v1/vehicles/tucson_hybrid")
+        assert response.status_code == 200
+        assert response.json()["data"] == get_vehicle_catalog()["tucson_hybrid"].model_dump(
+            mode="json"
+        )
         for vehicle_id in ("unknown", "other_vehicle"):
             response = vehicle_client.get(f"/api/v1/vehicles/{vehicle_id}")
             assert response.status_code == 404
@@ -122,7 +134,11 @@ class TestVehicleDatabase:
         use_session(mobile_app, model_session)
         use_session(pleos_app, model_session)
         with TestClient(mobile_app) as mobile, TestClient(pleos_app) as pleos:
-            for path in ("/api/v1/vehicles", "/api/v1/vehicles/avante_demo"):
+            for path in (
+                "/api/v1/vehicles",
+                "/api/v1/vehicles/avante_demo",
+                "/api/v1/vehicles/tucson_hybrid",
+            ):
                 baseline = mobile.get(path)
                 response = pleos.get(
                     path,

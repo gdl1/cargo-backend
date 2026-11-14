@@ -44,7 +44,6 @@ def folding_vehicle_data() -> dict[str, Any]:
 
 def test_avante_data_has_versioned_demo_spaces_and_all_fold_combinations() -> None:
     catalog = get_vehicle_catalog()
-    assert set(catalog) == {"avante_demo"}
     vehicle = catalog["avante_demo"]
     assert vehicle.data_version == "avante-demo-v3"
     assert vehicle.data_source == "DUMMY"
@@ -96,8 +95,8 @@ def test_catalog_changes_do_not_affect_other_calls() -> None:
     first = get_vehicle_catalog()
     second = get_vehicle_catalog()
     first.clear()
-    assert set(second) == {"avante_demo"}
-    assert set(get_vehicle_catalog()) == {"avante_demo"}
+    assert set(second) == {"avante_demo", "tucson_hybrid"}
+    assert set(get_vehicle_catalog()) == set(second)
 
 
 @pytest.mark.parametrize("location", ["packing_space", "opening"])

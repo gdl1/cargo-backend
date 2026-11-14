@@ -14,7 +14,7 @@ from app.schemas.calculation import CalculationCreate, CalculationData
 from app.schemas.packing import MAX_UNITS, PackingItem
 from app.schemas.plan import PlanInputUpdate
 from app.services.operations import json_data, replay_request, request_guard, save_response
-from app.services.vehicles import get_vehicle_catalog
+from app.services.vehicles import get_vehicle_catalog, space_matches_snapshot
 
 
 def owned_plan(session: Session, user_id: str, plan_id: UUID, *, lock: bool = False) -> Plan:
@@ -130,11 +130,7 @@ def get_base_arrangement(
     actual_spaces = {space["space_id"]: space for space in profile["spaces"]}
     for space in candidate.get("packing_spaces", []):
         actual = actual_spaces.get(space["space_id"])
-        if actual is None or any(
-            actual.get(key) != value
-            for key, value in space.items()
-            if key in ("width_cm", "depth_cm", "height_cm", "origin_cm", "kind", "seat_codes")
-        ):
+        if actual is None or not space_matches_snapshot(actual, space):
             raise AppError(409, "BASE_LAYOUT_STALE", "기준 배치의 공간 정보가 변경되었습니다.")
     return {**deepcopy(candidate), "input_snapshot": deepcopy(result["input_snapshot"])}
 

@@ -2,7 +2,7 @@
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from itertools import product
 from time import monotonic
@@ -61,7 +61,7 @@ class SearchBudget:
 class Box:
     item_id: str
     unit_index: int
-    space_id: str
+    space_ids: tuple[str, ...]
     position: tuple[int, ...]
     size: tuple[int, ...]
     orientation: str
@@ -69,8 +69,80 @@ class Box:
     supporting_ids: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class PackingRegion:
+    space_ids: tuple[str, ...]
+    minimum: tuple[int, ...]
+    maximum: tuple[int, ...]
+    opening: tuple[int, int] | None
+    boundary_y: int | None = None
+
+    def start_limits(self, size: tuple[int, ...]) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
+        if self.opening and (size[0] > self.opening[0] or size[2] > self.opening[1]):
+            return None
+        x, y, z = self.minimum
+        right, front, top = (end - dim for end, dim in zip(self.maximum, size, strict=True))
+        if self.boundary_y is not None:
+            # 연결 배치는 경계 양쪽을 모두 점유해야 합니다. 계산 좌표의 최소 단위는 1mm입니다.
+            y = max(y, self.boundary_y - size[1] + 1)
+            front = min(front, self.boundary_y - 1)
+        if x > right or y > front or z > top:
+            return None
+        return (x, y, z), (right, front, top)
+
+
+def _packing_regions(problem: PackingProblem) -> dict[tuple[str, ...], PackingRegion]:
+    spaces = sorted(problem.spaces, key=lambda space: (space.kind != "TRUNK", space.space_id))
+    regions = {}
+    for space in spaces:
+        origin = space.origin_cm
+        # 공간의 차량 기준 원점은 음수도 허용합니다.
+        minimum = tuple(int(value * 10) for value in (origin.x_cm, origin.y_cm, origin.z_cm))
+        maximum = tuple(
+            start + cm_to_mm(size)
+            for start, size in zip(
+                minimum, (space.width_cm, space.depth_cm, space.height_cm), strict=True
+            )
+        )
+        opening = space.opening
+        entry = (cm_to_mm(opening.width_cm), cm_to_mm(opening.height_cm)) if opening else None
+        ids = (space.space_id,)
+        regions[ids] = PackingRegion(ids, minimum, maximum, entry)
+
+    for space in spaces:
+        if space.connected_to_space_id is None:
+            continue
+        trunk = regions[(space.connected_to_space_id,)]
+        rear = regions[(space.space_id,)]
+        entries = [region.opening for region in (trunk, rear) if region.opening is not None]
+        entry = None
+        if entries:
+            entry = (min(size[0] for size in entries), min(size[1] for size in entries))
+        ids = trunk.space_ids + rear.space_ids
+        # 인접한 두 공간의 공통 폭·높이 안에서만 한 짐이 경계를 넘을 수 있습니다.
+        regions[ids] = PackingRegion(
+            ids,
+            (max(trunk.minimum[0], rear.minimum[0]), trunk.minimum[1], trunk.minimum[2]),
+            (
+                min(trunk.maximum[0], rear.maximum[0]),
+                rear.maximum[1],
+                min(trunk.maximum[2], rear.maximum[2]),
+            ),
+            entry,
+            boundary_y=rear.minimum[1],
+        )
+    return regions
+
+
+def placement_space_ids(placement: dict) -> tuple[str, ...]:
+    anchor = placement["space_id"]
+    if "spanning_space_id" in placement:
+        return (anchor, placement["spanning_space_id"])
+    return (anchor,)
+
+
 def _overlaps(first: Box, second: Box) -> bool:
-    return first.space_id == second.space_id and all(
+    return any(space_id in second.space_ids for space_id in first.space_ids) and all(
         start < other + other_size and other < start + size
         for start, size, other, other_size in zip(
             first.position, first.size, second.position, second.size, strict=True
@@ -79,18 +151,18 @@ def _overlaps(first: Box, second: Box) -> bool:
 
 
 def _support(
-    box: Box, placed: Sequence[Box], allowed: set[tuple[str, str]]
+    box: Box, placed: Sequence[Box], allowed: set[tuple[str, str]], floor: int
 ) -> tuple[str, ...] | None:
     x, y, z = box.position
     width, depth, _ = box.size
-    if z == 0:
+    if z == floor:
         return ()
     rectangles: list[tuple[int, int, int, int]] = []
     supports: list[str] = []
     for lower in placed:
         lx, ly, lz = lower.position
         lw, ld, lh = lower.size
-        if lower.space_id != box.space_id or lz + lh != z:
+        if lz + lh != z or not any(space_id in lower.space_ids for space_id in box.space_ids):
             continue
         left, right, front, back = (
             max(x, lx),
@@ -127,15 +199,18 @@ def _allowed_pairs(assessments: Sequence[dict]) -> set[tuple[str, str]]:
     }
 
 
-def _box(item: PackingItem, placement: dict) -> Box:
+def _box(item: PackingItem, placement: dict, origin: tuple[int, ...]) -> Box:
     orientation = placement["orientation"]
     if orientation not in item.allowed_orientations:
         raise ValueError("허용하지 않은 회전입니다.")
     return Box(
         item.item_id,
         placement["unit_index"],
-        placement["space_id"],
-        tuple(cm_to_mm(placement[axis]) for axis in ("x_cm", "y_cm", "z_cm")),
+        placement_space_ids(placement),
+        tuple(
+            start + cm_to_mm(placement[axis])
+            for start, axis in zip(origin, ("x_cm", "y_cm", "z_cm"), strict=True)
+        ),
         oriented_size(
             cm_to_mm(item.width_cm),
             cm_to_mm(item.depth_cm),
@@ -157,7 +232,7 @@ def validate_packing(
 ) -> None:
     """탐색과 별도로 수량·회전·경계·입구·겹침·받침 참조를 검증합니다."""
     by_item = {item.item_id: item for item in problem.items}
-    spaces = {space.space_id: space for space in problem.spaces}
+    regions = _packing_regions(problem)
     units = [(str(row["item_id"]), row["unit_index"]) for row in placements]
     if expected_units is None:
         expected_units = {
@@ -170,29 +245,24 @@ def validate_packing(
     if [row["load_order"] for row in placements] != list(range(1, len(placements) + 1)):
         raise ValueError("적재 순서는 1부터 연속되어야 합니다.")
     checked: list[Box] = []
+    allowed = _allowed_pairs(stacking_assessments)
     for row in placements:
         item = by_item[str(row["item_id"])]
         if type(row["unit_index"]) is not int or not 1 <= row["unit_index"] <= item.quantity:
             raise ValueError("낱개 번호가 수량 범위를 벗어났습니다.")
-        box = _box(item, row)
-        if box.space_id not in spaces:
-            raise ValueError("등록되지 않은 공간입니다.")
-        space = spaces[box.space_id]
-        bounds = tuple(
-            cm_to_mm(value) for value in (space.width_cm, space.depth_cm, space.height_cm)
-        )
-        if any(
-            p + size > limit for p, size, limit in zip(box.position, box.size, bounds, strict=True)
+        region = regions.get(placement_space_ids(row))
+        if region is None:
+            raise ValueError("등록되지 않은 공간 또는 연결입니다.")
+        box = _box(item, row, regions[(row["space_id"],)].minimum)
+        limits = region.start_limits(box.size)
+        if limits is None or any(
+            not lower <= position <= upper
+            for position, lower, upper in zip(box.position, *limits, strict=True)
         ):
-            raise ValueError("공간 경계를 벗어난 배치입니다.")
-        if space.opening and (
-            box.size[0] > cm_to_mm(space.opening.width_cm)
-            or box.size[2] > cm_to_mm(space.opening.height_cm)
-        ):
-            raise ValueError("입구 폭이나 높이를 초과합니다.")
+            raise ValueError("공간 경계나 입구 규격을 벗어난 배치입니다.")
         if any(_overlaps(box, other) for other in checked):
             raise ValueError("짐이 겹칩니다.")
-        supports = _support(box, checked, _allowed_pairs(stacking_assessments))
+        supports = _support(box, checked, allowed, region.minimum[2])
         if supports is None or set(supports) != set(box.supporting_ids):
             raise ValueError("밑면 받침 또는 쌓기 조건을 충족하지 않습니다.")
         checked.append(box)
@@ -225,22 +295,23 @@ def find_layout(
         stacking_assessments=stacking_assessments,
         expected_units=fixed_units,
     )
-    placed = [_box(items[str(row["item_id"])], row) for row in fixed_placements]
+    regions = _packing_regions(problem)
+    placed = [
+        _box(items[str(row["item_id"])], row, regions[(row["space_id"],)].minimum)
+        for row in fixed_placements
+    ]
     remaining = wanted - fixed_units
     allowed = _allowed_pairs(stacking_assessments)
-    spaces = sorted(problem.spaces, key=lambda space: (space.kind != "TRUNK", space.space_id))
-    bounds = {
-        space.space_id: tuple(
-            cm_to_mm(value) for value in (space.width_cm, space.depth_cm, space.height_cm)
-        )
-        for space in spaces
-    }
+    space_sizes = [
+        tuple(cm_to_mm(value) for value in (space.width_cm, space.depth_cm, space.height_cm))
+        for space in problem.spaces
+    ]
     sizes = {
         item.item_id: (cm_to_mm(item.width_cm), cm_to_mm(item.depth_cm), cm_to_mm(item.height_cm))
         for item in problem.items
     }
     if sum(math.prod(sizes[item_id]) for item_id, _ in wanted) > sum(
-        math.prod(size) for size in bounds.values()
+        math.prod(size) for size in space_sizes
     ):
         return None
     possible_sizes = {}
@@ -249,26 +320,13 @@ def find_layout(
             shape
             for orientation in item.allowed_orientations
             if (shape := oriented_size(*sizes[item_id], orientation))
-            and any(
-                all(
-                    value <= limit
-                    for value, limit in zip(shape, bounds[space.space_id], strict=True)
-                )
-                and (
-                    space.opening is None
-                    or (
-                        shape[0] <= cm_to_mm(space.opening.width_cm)
-                        and shape[2] <= cm_to_mm(space.opening.height_cm)
-                    )
-                )
-                for space in spaces
-            )
+            and any(region.start_limits(shape) is not None for region in regions.values())
         ]
     if any(not possible_sizes[item_id] for item_id, _ in wanted):
         return None
     if not allowed and sum(
         min(shape[0] * shape[1] for shape in possible_sizes[item_id]) for item_id, _ in wanted
-    ) > sum(size[0] * size[1] for size in bounds.values()):
+    ) > sum(size[0] * size[1] for size in space_sizes):
         return None
 
     def search(unplaced: set[tuple[str, int]]) -> bool:
@@ -288,39 +346,38 @@ def find_layout(
                 if size in seen_sizes:
                     continue
                 seen_sizes.add(size)
-                for space in spaces:
+                for region in regions.values():
                     budget.check()
-                    limits = bounds[space.space_id]
-                    if any(a > b for a, b in zip(size, limits, strict=True)) or (
-                        space.opening
-                        and (
-                            size[0] > cm_to_mm(space.opening.width_cm)
-                            or size[2] > cm_to_mm(space.opening.height_cm)
-                        )
-                    ):
+                    limits = region.start_limits(size)
+                    if limits is None:
                         continue
-                    neighbors = [box for box in placed if box.space_id == space.space_id]
+                    lower, upper = limits
+                    neighbors = [
+                        box
+                        for box in placed
+                        if any(code in box.space_ids for code in region.space_ids)
+                    ]
                     axes = []
                     for axis in (0, 1):
-                        points = {0, limits[axis] - size[axis]}
+                        points = {lower[axis], upper[axis]}
                         for other in neighbors:
                             start, end = (
                                 other.position[axis],
                                 other.position[axis] + other.size[axis],
                             )
                             points.update((start, end, start - size[axis], end - size[axis]))
-                        axes.append(
-                            sorted(p for p in points if 0 <= p <= limits[axis] - size[axis])
-                        )
-                    heights = sorted({0, *(box.position[2] + box.size[2] for box in neighbors)})
+                        axes.append(sorted(p for p in points if lower[axis] <= p <= upper[axis]))
+                    heights = sorted(
+                        {lower[2], *(box.position[2] + box.size[2] for box in neighbors)}
+                    )
                     for z, y, x in product(heights, axes[1], axes[0]):
                         budget.check(visit=True)
-                        if z + size[2] > limits[2]:
+                        if not lower[2] <= z <= upper[2]:
                             continue
                         box = Box(
                             item_id,
                             unit_index,
-                            space.space_id,
+                            region.space_ids,
                             (x, y, z),
                             size,
                             orientation,
@@ -328,21 +385,10 @@ def find_layout(
                         )
                         if any(_overlaps(box, other) for other in neighbors):
                             continue
-                        support = _support(box, neighbors, allowed)
+                        support = _support(box, neighbors, allowed, lower[2])
                         if support is None:
                             continue
-                        placed.append(
-                            Box(
-                                item_id,
-                                unit_index,
-                                space.space_id,
-                                (x, y, z),
-                                size,
-                                orientation,
-                                box.placement_id,
-                                support,
-                            )
-                        )
+                        placed.append(replace(box, supporting_ids=support))
                         if search(unplaced - {(item_id, unit_index)}):
                             return True
                         placed.pop()
@@ -351,21 +397,28 @@ def find_layout(
     if not search(remaining):
         return None
     budget.check()
-    result = [
-        {
+    result = []
+    for index, box in enumerate(placed, start=1):
+        space_id = box.space_ids[0]
+        origin = regions[(space_id,)].minimum
+        x, y, z = (
+            centimeters(value - start) for value, start in zip(box.position, origin, strict=True)
+        )
+        placement = {
             "placement_id": box.placement_id,
             "item_id": box.item_id,
             "unit_index": box.unit_index,
-            "space_id": box.space_id,
-            "x_cm": centimeters(box.position[0]),
-            "y_cm": centimeters(box.position[1]),
-            "z_cm": centimeters(box.position[2]),
+            "space_id": space_id,
+            "x_cm": x,
+            "y_cm": y,
+            "z_cm": z,
             "orientation": box.orientation,
             "load_order": index,
             "supporting_placement_ids": list(box.supporting_ids),
         }
-        for index, box in enumerate(placed, start=1)
-    ]
+        if len(box.space_ids) == 2:
+            placement["spanning_space_id"] = box.space_ids[1]
+        result.append(placement)
     validate_packing(
         problem, result, stacking_assessments=stacking_assessments, expected_units=wanted
     )

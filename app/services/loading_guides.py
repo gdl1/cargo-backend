@@ -29,7 +29,7 @@ from app.services.operations import (
     request_guard,
     save_response,
 )
-from app.services.packing import validate_packing
+from app.services.packing import placement_space_ids, validate_packing
 
 SCOPE = "/ai/loading-guides"
 FALLBACK_REPLY = "위 그림을 보고 배치해 주세요."
@@ -120,7 +120,7 @@ def _load_context(session: Session, user_id: str, payload: LoadingGuideCreate) -
         UUID(placement["placement_id"])
         if (
             placement["item_id"] not in items
-            or placement["space_id"] not in spaces
+            or not set(placement_space_ids(placement)) <= spaces.keys()
             or not set(placement["supporting_placement_ids"]) <= seen
         ):
             raise _unavailable()
@@ -207,8 +207,9 @@ def _plain_text(text: str, context: dict, placement: dict | None = None) -> str:
         ]
         item_ids = {placement["item_id"]} | {row["item_id"] for row in supports}
         related = [item for item in context["items"] if item["item_id"] in item_ids]
-        space = next(row for row in context["spaces"] if row["space_id"] == placement["space_id"])
-        allowed = _numbers([placement, related, space, supports])
+        space_ids = placement_space_ids(placement)
+        spaces = [row for row in context["spaces"] if row["space_id"] in space_ids]
+        allowed = _numbers([placement, related, spaces, supports])
         allowed_names = {item["name"] for item in related}
         for name in names:
             if name in checked:
@@ -232,7 +233,11 @@ def _decorate_step(placement: dict, context: dict, text: str) -> str:
     item = next(row for row in context["items"] if row["item_id"] == placement["item_id"])
     space = next(row for row in context["spaces"] if row["space_id"] == placement["space_id"])
     kind = {"TRUNK": "트렁크", "SEAT": "좌석 공간", "FOLDED_SEAT": "폴딩 공간"}[space["kind"]]
-    prefix = f"{item['name']} {placement['unit_index']}번째: {kind}({space['space_id']}). "
+    location = f"{kind}({space['space_id']})"
+    if "spanning_space_id" in placement:
+        rear = placement["spanning_space_id"]
+        location = f"트렁크({space['space_id']})와 접힌 2열({rear})에 걸쳐"
+    prefix = f"{item['name']} {placement['unit_index']}번째: {location}. "
     if placement["placement_id"] in context["fixed_placement_ids"]:
         return prefix + "이미 실린 짐이므로 현재 위치와 방향을 그대로 유지해 주세요."
     position = ", ".join(f"{placement[axis + '_cm']:g}" for axis in ("x", "y", "z"))
@@ -261,13 +266,13 @@ def _generate(payload: LoadingGuideCreate, context: dict, settings: Settings) ->
             "vehicle_data_version과 spaces는 계산 당시 모델입니다. "
             "최신 차량 정보를 덧붙이지 마세요. "
             "공간은 더미·추정값일 수 있으므로 실제 차량의 실측값으로 단정하지 마세요. "
-            "1차의 트렁크·후석 간격 0은 계산용 가정이며 실제 단차나 간격이 없다는 뜻이 아닙니다. "
-            "한 공간에 여러 짐을 놓을 수 있지만 짐 하나를 두 공간에 걸쳐 놓도록 안내하지 마세요. "
+            "spanning_space_id가 있는 짐은 space_id의 트렁크와 해당 폴딩 공간에 걸쳐 놓습니다. "
+            "그 외의 짐은 space_id 공간 한 곳에 놓습니다. "
             "등록된 공간과 폴딩 코드만 설명하고 6:4의 좌우 대응이나 폴딩 기능을 추측하지 마세요. "
             "바닥부터 천장까지의 높이를 좌석 위 적재 높이로 바꾸어 설명하지 마세요. "
             "text는 해당 단계의 물품과 받침 짐만 설명하고 제외한 물품을 싣도록 하지 마세요. "
             "숫자는 그 단계의 저장된 값만 cm 단위로 사용하고 새 치수·회전 각도를 추정하지 마세요. "
-            "좌표 원점은 각 공간의 뒤쪽·왼쪽·바닥이며 x는 오른쪽, y는 차량 앞쪽, z는 위쪽입니다. "
+            "좌표는 space_id 공간의 뒤쪽·왼쪽·바닥 기준이며 x는 오른쪽, y는 앞쪽, z는 위쪽입니다. "
             "placement 좌표는 회전한 물건의 최소 x/y/z 모서리이며 중심 좌표가 아닙니다. "
             "물품 W/D/H는 원래 가로/깊이/높이이고 orientation은 x/y/z 축에 놓이는 순서입니다. "
             "target_folded_segments는 최종 접힘 상태이며 모두 새로 접으라는 뜻이 아닙니다. "

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from decimal import Decimal
 from itertools import combinations
 from typing import Annotated, Literal, Self
@@ -73,12 +74,18 @@ class SpaceOrigin(VehicleSchema):
     z_cm: Coordinate
 
 
-class VehicleSpace(PackingSpace):
+class PositionedSpace(PackingSpace):
     space_id: NonEmptyText
     kind: Literal["TRUNK", "SEAT", "FOLDED_SEAT"]
     origin_cm: SpaceOrigin
-    seat_codes: tuple[SeatCode, ...]
     opening: Opening | None
+    connected_to_space_id: NonEmptyText | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+
+class VehicleSpace(PositionedSpace):
+    seat_codes: tuple[SeatCode, ...]
     data_source: Literal["DUMMY", "MEASURED"]
 
     @model_validator(mode="after")
@@ -101,6 +108,24 @@ def spaces_overlap(first: VehicleSpace, second: VehicleSpace) -> bool:
     )
 
 
+def validate_trunk_connections(spaces: Sequence[PositionedSpace]) -> None:
+    by_id = {space.space_id: space for space in spaces}
+    for rear in spaces:
+        if rear.connected_to_space_id is None:
+            continue
+        trunk = by_id.get(rear.connected_to_space_id)
+        if rear.kind != "FOLDED_SEAT" or trunk is None or trunk.kind != "TRUNK":
+            raise ValueError("폴딩 공간은 같은 조합의 트렁크와 연결해야 합니다.")
+        rear_origin, trunk_origin = rear.origin_cm, trunk.origin_cm
+        if (
+            rear_origin.y_cm != trunk_origin.y_cm + trunk.depth_cm
+            or rear_origin.z_cm != trunk_origin.z_cm
+            or rear_origin.x_cm >= trunk_origin.x_cm + trunk.width_cm
+            or trunk_origin.x_cm >= rear_origin.x_cm + rear.width_cm
+        ):
+            raise ValueError("연결 공간은 바닥 높이가 같고 앞뒤 경계에서 폭이 겹쳐야 합니다.")
+
+
 class PackingProfile(VehicleSchema):
     profile_id: NonEmptyText
     target_folded_segments: tuple[NonEmptyText, ...]
@@ -116,6 +141,7 @@ class PackingProfile(VehicleSchema):
                 raise ValueError("같은 좌석의 공간을 중복 사용할 수 없습니다.")
             if spaces_overlap(first, second):
                 raise ValueError("같은 조합의 적재 공간은 서로 겹칠 수 없습니다.")
+        validate_trunk_connections(self.spaces)
 
         expected = None
         if len(self.spaces) == 1:

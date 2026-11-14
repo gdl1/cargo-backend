@@ -1,5 +1,5 @@
 {
-  "vehicle_id": "avante_demo",
+  "vehicle_id": "tucson_hybrid",
   "passenger_count": 2,
   "car_seats": ["ROW_2_RIGHT"],
   "retained_seats": ["ROW_2_LEFT"],
