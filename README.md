@@ -25,8 +25,8 @@ docker compose up -d --wait db
 | [API 문서](http://127.0.0.1:8000/docs) | API 목록 |
 | [서버 상태](http://127.0.0.1:8000/api/v1/health) | HTTP 200 |
 | [DB 상태](http://127.0.0.1:8000/api/v1/health/db) | HTTP 200 |
-| [차량 목록](http://127.0.0.1:8000/api/v1/vehicles) | `avante_demo` 조회 |
-| [차량 상세](http://127.0.0.1:8000/api/v1/vehicles/avante_demo) | 좌석, 트렁크, 입구 규격 |
+| [차량 목록](http://127.0.0.1:8000/api/v1/vehicles) | `tucson_hybrid`, `avante_demo` 조회 |
+| [차량 상세](http://127.0.0.1:8000/api/v1/vehicles/tucson_hybrid) | 투싼 좌석, 입구, 적재 공간과 연결 관계 |
 | [계획 목록](http://127.0.0.1:8000/api/v1/plans) | 현재 데모 사용자의 저장된 계획 |
 
 FastAPI는 PC에서 실행하고 PostgreSQL은 Docker에서 실행합니다. 5432 포트를 이미 쓰고 있다면 `.env`의 `POSTGRES_PORT`를 변경하세요.
@@ -67,19 +67,23 @@ D 드라이브의 기존 가상환경을 사용한다면 `$cargoPython = 'D:\ven
 
 두 앱은 같은 백엔드 주소를 사용하고, 차량 목록에서 받은 `vehicle_id`로 상세 정보를 조회합니다. 차량 조회에는 사용자별 구분이 없습니다.
 
-현재 차량 기준은 `app/data/vehicles/avante-demo-v3.json`입니다. DB에는 차량 ID와 이름을 저장하고 좌석·공간 규격은 이 파일에서 읽습니다.
+투싼 하이브리드의 좌석과 공간은 `app/data/vehicles/tucson-hybrid-v1.json`에서 읽습니다. DB에는 차량 ID와 이름을 저장합니다.
 
 | 항목 | 값 |
 | --- | --- |
-| 차량 / 버전 | `avante_demo` / `avante-demo-v3` |
-| 자료 구분 / 정원 | `DUMMY` / 운전자 포함 5명 |
-| 트렁크 폭 × 깊이 × 높이 | 97 × 110 × 50cm |
-| 입구 폭 × 높이 | 99 × 41.5cm |
-| 폴딩 | 뒷좌석 두 구간·조수석을 조합한 더미 8개 |
+| 차량 / 버전 | `tucson_hybrid` / `tucson-hybrid-v1` |
+| 트렁크 폭 × 깊이 × 높이 | 123 × 100 × 80cm (바닥판 위쪽, 폭은 휠하우스 사이 기준) |
+| 트렁크 입구 폭 × 높이 | 116 × 80cm |
+| 2열 전체 폴딩 | `REAR_ALL`, 남은 탑승 좌석은 운전석과 조수석 |
+| 폴딩 후 전체 적재 깊이 / 2열 위 여유 높이 | 160cm / 70cm |
 
-공유 자료의 트렁크 깊이·높이와 조수석 방석 폭 48cm를 참고했지만, 나머지 치수와 폴딩 좌우 대응은 더미라 전체 `data_source`는 `DUMMY`입니다. 1차에서는 공간 사이 간격을 0으로 단순화하고 짐 한 개는 한 공간 안에 놓습니다. 한 공간에 여러 짐을 배치할 수 있습니다. 두 공간에 걸친 긴 짐과 실제 연결부·단차 반영은 2차 범위입니다.
+실측표의 160cm를 총 깊이로 적용해 100cm 지점부터 2열 폴딩 공간 60cm를 배정했습니다. 위쪽 바닥판과 접힌 2열의 연결면을 같은 높이로 모델링했습니다. 2열과 연결부의 폭 실측값이 없어 입구 폭 116cm를 중앙에 배치한 임시 폭으로 씁니다. 이 가정이 들어간 2열 공간과 차량 전체는 `DUMMY`, 실측값을 쓴 트렁크는 `MEASURED`입니다. 아래쪽 바닥판의 10cm 단차와 2열 부분 폴딩은 별도 측정 및 계산 설정이 필요합니다.
 
-현재 계산은 v3를 사용하며, 이전 계산의 차량 정보는 저장 당시 값으로 유지합니다. 이전 버전의 배치를 `KEEP_EXISTING` 기준으로 쓰면 `409 BASE_LAYOUT_STALE`이므로 다시 계산해 배치를 선택해야 합니다.
+트렁크와 2열에 걸친 짐은 배치 한 건으로 반환합니다. `space_id: "TRUNK"`는 좌표 기준 공간이고, `spanning_space_id: "REAR_FOLDED"`가 추가로 점유한 공간입니다. `packing_spaces`의 `origin_cm`에 배치의 상대 좌표를 더해 차량 기준 좌표를 얻습니다. 앱은 짐을 한 번 그리되 트렁크 경계를 넘어 접힌 2열까지 표시해야 합니다. 2열을 점유하므로 `all_in_trunk`는 `false`입니다.
+
+미리보기에서 `vehicle_id`를 `tucson_hybrid`로, `passenger_count`를 `2`로 지정하고 `40 × 140 × 20cm` 짐 하나를 넣으면 연결 배치를 확인할 수 있습니다. `calculation_options`에 `current_folded_segments: []`와 `occupied_seats: ["ROW_1_LEFT", "ROW_1_RIGHT"]`를 넣으면 `REAR_ALL`을 목표로 계산합니다.
+
+기존 `avante_demo` 계획은 `avante-demo-v3` 공간과 폴딩 조합으로 계산합니다. 이전 계산의 차량 정보는 저장 당시 값으로 유지합니다. 이전 차량 버전의 배치를 `KEEP_EXISTING` 기준으로 쓰면 `409 BASE_LAYOUT_STALE`이므로 다시 계산해 배치를 선택해야 합니다.
 
 `python -m app.db.seed`는 차량 ID가 없으면 추가하고 있으면 이름을 갱신합니다. 반복 실행해도 중복되지 않으며 기존 계획이나 다른 차량을 삭제하지 않습니다. 등록 전에는 목록이 비어 있고 상세 조회는 `404 VEHICLE_NOT_FOUND`를 반환합니다.
 

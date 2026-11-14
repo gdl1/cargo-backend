@@ -1,18 +1,38 @@
-import json
 from collections.abc import Sequence
 from functools import lru_cache
 from importlib.resources import files
 
 from app.schemas.vehicle import PackingProfile, SeatCode, VehicleDetail
 
+SPACE_SNAPSHOT_FIELDS = (
+    "space_id",
+    "kind",
+    "width_cm",
+    "depth_cm",
+    "height_cm",
+    "origin_cm",
+    "seat_codes",
+    "opening",
+    "connected_to_space_id",
+)
+
+
+def space_matches_snapshot(space: dict, snapshot: dict) -> bool:
+    return all(
+        space.get(field) == snapshot.get(field)
+        for field in SPACE_SNAPSHOT_FIELDS
+        # 이전 계산 결과에는 입구가 저장되지 않았습니다.
+        if field != "opening" or field in snapshot
+    )
+
 
 @lru_cache(maxsize=1)
 def _load_vehicle_data() -> tuple[VehicleDetail, ...]:
-    # 공유 자료의 트렁크 깊이 110·높이 50cm와 조수석 방석 폭 48cm를 참고합니다.
-    # 나머지 치수·6:4 좌우 대응은 더미이며, 간격 0도 1차 계산용 가정입니다.
-    path = files("app.data.vehicles").joinpath("avante-demo-v3.json")
-    vehicle = VehicleDetail.model_validate(json.loads(path.read_text(encoding="utf-8")))
-    return (vehicle,)
+    directory = files("app.data.vehicles")
+    return tuple(
+        VehicleDetail.model_validate_json(directory.joinpath(name).read_text(encoding="utf-8"))
+        for name in ("avante-demo-v3.json", "tucson-hybrid-v1.json")
+    )
 
 
 def get_vehicle_catalog() -> dict[str, VehicleDetail]:

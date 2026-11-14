@@ -1,0 +1,61 @@
+{
+  "vehicle_id": "tucson_hybrid",
+  "name": "투싼 하이브리드",
+  "data_version": "tucson-hybrid-v1",
+  "data_source": "DUMMY",
+  "seat_capacity": 5,
+  "seat_codes": ["ROW_1_LEFT", "ROW_1_RIGHT", "ROW_2_LEFT", "ROW_2_CENTER", "ROW_2_RIGHT"],
+  "driver_seat": "ROW_1_LEFT",
+  "fold_segments": [
+    {"code": "REAR_ALL", "seat_codes": ["ROW_2_LEFT", "ROW_2_CENTER", "ROW_2_RIGHT"]}
+  ],
+  "opening": {"width_cm": 116, "height_cm": 80},
+  "packing_profiles": [
+    {
+      "profile_id": "TRUNK_ONLY",
+      "target_folded_segments": [],
+      "spaces": [
+        {
+          "space_id": "TRUNK",
+          "kind": "TRUNK",
+          "width_cm": 123,
+          "depth_cm": 100,
+          "height_cm": 80,
+          "origin_cm": {"x_cm": 0, "y_cm": 0, "z_cm": 0},
+          "seat_codes": [],
+          "opening": {"width_cm": 116, "height_cm": 80},
+          "data_source": "MEASURED"
+        }
+      ]
+    },
+    {
+      "profile_id": "REAR_ALL_FOLDED",
+      "target_folded_segments": ["REAR_ALL"],
+      "spaces": [
+        {
+          "space_id": "TRUNK",
+          "kind": "TRUNK",
+          "width_cm": 123,
+          "depth_cm": 100,
+          "height_cm": 80,
+          "origin_cm": {"x_cm": 0, "y_cm": 0, "z_cm": 0},
+          "seat_codes": [],
+          "opening": {"width_cm": 116, "height_cm": 80},
+          "data_source": "MEASURED"
+        },
+        {
+          "space_id": "REAR_FOLDED",
+          "kind": "FOLDED_SEAT",
+          "width_cm": 116,
+          "depth_cm": 60,
+          "height_cm": 70,
+          "origin_cm": {"x_cm": 3.5, "y_cm": 100, "z_cm": 0},
+          "seat_codes": ["ROW_2_LEFT", "ROW_2_CENTER", "ROW_2_RIGHT"],
+          "opening": {"width_cm": 116, "height_cm": 80},
+          "connected_to_space_id": "TRUNK",
+          "data_source": "DUMMY"
+        }
+      ]
+    }
+  ]
+}
