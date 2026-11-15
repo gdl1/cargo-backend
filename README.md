@@ -35,7 +35,7 @@ D 드라이브의 기존 가상환경을 사용한다면 `$cargoPython = 'D:\ven
 
 ## DB 모델
 
-`alembic upgrade head`로 최신 버전 `0005`까지 적용합니다. 기존 DB도 같은 명령으로 갱신하며, 새 DB에서는 전체 테이블을 생성합니다.
+`alembic upgrade head`로 최신 버전 `0006`까지 적용합니다. 기존 DB도 같은 명령으로 갱신하며, 새 DB에서는 전체 테이블을 생성합니다.
 
 | 테이블 | 저장할 내용 |
 | --- | --- |
@@ -48,7 +48,7 @@ D 드라이브의 기존 가상환경을 사용한다면 `$cargoPython = 'D:\ven
 | arrangement | 계산별 추천 순위, 탑승 좌석, 목표 폴딩 상태 |
 | placement | 짐 한 개의 좌표, 회전 방향, 적재 순서 |
 | calculation_preview | 저장 전 계산 결과와 만료 시각 |
-| saved_item | 내 짐과 즐겨찾기 |
+| saved_item | 내 짐, 즐겨찾기, 연결된 사진의 S3 객체 키 |
 | ai_conversation / product_candidate | 자연어 대화 상태와 제품 규격 후보 |
 | operation_receipt | 요청별 멱등성 처리 |
 | push_device / cargo_reminder / push_delivery | 기기 토큰, 알림 요청과 기기별 발송 상태 |
@@ -150,6 +150,8 @@ D 드라이브의 기존 가상환경을 사용한다면 `$cargoPython = 'D:\ven
 | `POST /api/v1/ai/loading-guides` | 선택한 배치의 상세 AI 가이드 |
 | `GET /api/v1/items`, `POST /api/v1/items` | 내 짐 조회·등록 |
 | `PATCH /api/v1/items/{saved_item_id}/favorite` | 내 짐 즐겨찾기 변경 |
+| `PUT /api/v1/items/{saved_item_id}/photo` | 내 짐 사진 업로드·교체 |
+| `GET /api/v1/items/{saved_item_id}/photo` | 내 짐 사진 열기 |
 
 계획 없는 적재 확인, 기존 계획 변경, 기존 배치 유지 추가 적재를 지원합니다. `KEEP_EXISTING`은 선택한 배치대로 실제 짐이 실렸다고 가정하며, 원래 짐의 위치·방향을 유지합니다. 계산만으로 계획을 덮어쓰지 않고, 사용자가 결과를 선택한 뒤 기존 계획에 반영하거나 `POST /api/v1/plans`로 새 계획을 저장합니다. 요청·응답과 필요한 헤더는 `/docs`에서 확인합니다.
 
@@ -171,6 +173,30 @@ D 드라이브의 기존 가상환경을 사용한다면 `$cargoPython = 'D:\ven
 | `LLM_TIMEOUT_SECONDS` / `LLM_MAX_OUTPUT_TOKENS` | AI 호출별 20초 / 출력 토큰 4000 |
 
 1차에서는 계산 제한시간 초과 시 `TIME_LIMIT`과 빈 배치 목록을 반환합니다. 이 시간은 AI·검색·DB·네트워크를 포함한 전체 응답시간이 아니며 실제 서버에서 측정해야 합니다. 남은 공간의 cm·L·% 수치 안내와 제한시간 이후 탐색 이어하기는 2차 범위입니다.
+
+## Android 실측 사진
+
+1. Android에서 실측 치수를 확인하면 `POST /api/v1/items`로 짐을 등록합니다. 응답의 `saved_item_id`를 보관합니다.
+2. 사진이 있으면 `PUT /api/v1/items/{saved_item_id}/photo`를 호출합니다. `Content-Type`은 `image/jpeg` 또는 `image/png`이고 본문은 파일 바이트입니다. 파일당 최대 5 MiB와 2천만 픽셀을 허용합니다. 새 업로드에는 새 UUID를 `Idempotency-Key`에 넣고, 같은 짐에 같은 사진을 재시도할 때는 기존 키를 사용합니다.
+3. 앱은 `GET /api/v1/items`의 `data.items[].photo_url`을 Base URL 뒤에 붙여 같은 팀 인증으로 불러옵니다. 사진 응답은 JPEG 또는 PNG입니다. `photo_url`이 `null`이거나 로드에 실패하면 기본 아이콘을 표시합니다. 사진을 교체하면 같은 경로에서 새 파일을 다시 불러옵니다.
+
+사진 업로드 성공 시 HTTP 200과 `data.saved_item_id`, `data.photo_url`을 반환합니다. 업로드가 실패해도 등록된 짐과 기존 사진을 유지하므로 같은 짐 ID로 다시 시도할 수 있습니다. 사진 교체는 새 S3 객체를 저장해 DB에 연결한 뒤 이전 객체를 정리합니다.
+
+| HTTP | 오류 코드 | 의미 |
+| --- | --- | --- |
+| 404 | `ITEM_NOT_FOUND` / `ITEM_PHOTO_NOT_FOUND` | 조회 범위에 짐이 없거나 연결된 사진이 없음 |
+| 409 | `IDEMPOTENCY_KEY_REUSED` / `REQUEST_IN_PROGRESS` | 키와 입력 불일치 또는 동일 요청 처리 중 |
+| 413 | `ITEM_PHOTO_TOO_LARGE` | 파일 크기 또는 해상도 초과 |
+| 415 | `ITEM_PHOTO_UNSUPPORTED_TYPE` | 지원하는 Content-Type이 아님 |
+| 422 | `ITEM_PHOTO_INVALID` / `VALIDATION_ERROR` | 손상된 사진, 사진 형식 불일치 또는 UUID 헤더·경로 오류 |
+| 503 | `ITEM_PHOTO_NOT_CONFIGURED` / `ITEM_PHOTO_STORAGE_UNAVAILABLE` | S3 설정 누락 또는 저장소 연결·권한 오류 |
+
+### AWS 배포 설정
+
+- 범용 S3 버킷을 만들고 퍼블릭 액세스 차단을 켭니다. S3 객체 키는 `item-photos/`로 시작하고 파일은 백엔드가 읽어 앱에 전달합니다. [S3 퍼블릭 액세스 차단](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html)
+- EC2 인스턴스 프로파일 역할에 해당 버킷의 `arn:aws:s3:::버킷명/item-photos/*` 범위로 `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`를 부여합니다. API 컨테이너는 역할의 임시 자격 증명을 사용합니다. [Boto3 자격 증명](https://docs.aws.amazon.com/boto3/latest/guide/credentials.html)
+- 서버 환경에 실제 `ITEM_PHOTO_S3_BUCKET`과 `ITEM_PHOTO_S3_REGION`을 넣고 컨테이너에 전달합니다. API가 EC2 인스턴스 프로파일을 사용하는 경우 컨테이너에서 IMDSv2에 접근할 수 있어야 합니다. [EC2 인스턴스 메타데이터 설정](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html)
+- API를 새 이미지로 교체하기 전에 DB에 `alembic upgrade head`를 실행합니다. HTTPS 팀 인증을 적용한 주소로 테스트 짐을 등록하고 사진을 올린 뒤, 목록의 `photo_url`이 사진을 반환하는지 확인합니다.
 
 ## 모바일 짐 챙기기 알림
 

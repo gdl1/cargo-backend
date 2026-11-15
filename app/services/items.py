@@ -1,16 +1,43 @@
-from uuid import UUID
+import logging
+from hashlib import sha256
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, true
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, aliased
 
 from app.core.exceptions import AppError
 from app.models.item import SavedItem
-from app.schemas.item import ItemCreate, ItemData, ItemFavoriteUpdate, ItemListData
+from app.schemas.item import ItemCreate, ItemData, ItemFavoriteUpdate, ItemListData, ItemPhotoData
+from app.services.item_photos import ItemPhotoStorage, validate_item_photo
 from app.services.operations import replay_request, save_response
+
+logger = logging.getLogger(__name__)
+
+
+def _item_photo_path(saved_item_id: UUID) -> str:
+    return f"/api/v1/items/{saved_item_id}/photo"
 
 
 def _item_data(item: SavedItem) -> ItemData:
-    return ItemData.model_validate(item, from_attributes=True)
+    data = ItemData.model_validate(item, from_attributes=True)
+    if item.photo_object_key is not None:
+        data.photo_url = _item_photo_path(item.saved_item_id)
+    return data
+
+
+def _lock_owned_item(
+    session: Session, user_id: str, saved_item_id: UUID, *, read_lock: bool = False
+) -> SavedItem:
+    item = session.scalar(
+        select(SavedItem)
+        .where(SavedItem.saved_item_id == saved_item_id, SavedItem.user_id == user_id)
+        .with_for_update(read=read_lock)
+        .execution_options(populate_existing=True)
+    )
+    if item is None:
+        raise AppError(404, "ITEM_NOT_FOUND", "저장한 짐을 찾을 수 없습니다.")
+    return item
 
 
 def create_item(
@@ -47,26 +74,17 @@ def list_items(
         .cte("item_page")
     )
     total = select(func.count().label("total")).select_from(SavedItem).where(*filters).subquery()
-    rows = (
-        session.execute(
-            select(total.c.total, page)
-            .select_from(total.outerjoin(page, true()))
-            .order_by(page.c.created_at.desc(), page.c.saved_item_id.desc())
-        )
-        .mappings()
-        .all()
-    )
+    paged_item = aliased(SavedItem, page)
+    rows = session.execute(
+        select(total.c.total, paged_item)
+        .select_from(total.outerjoin(page, true()))
+        .order_by(page.c.created_at.desc(), page.c.saved_item_id.desc())
+    ).all()
     return ItemListData(
-        items=[
-            ItemData.model_validate(
-                {key: value for key, value in row.items() if key not in {"total", "user_id"}}
-            )
-            for row in rows
-            if row["saved_item_id"] is not None
-        ],
+        items=[_item_data(item) for _, item in rows if item is not None],
         limit=limit,
         offset=offset,
-        total=rows[0]["total"],
+        total=rows[0].total,
     )
 
 
@@ -80,14 +98,7 @@ def update_item_favorite(
     scope = "/api/v1/items/favorite"
     request = {"saved_item_id": str(saved_item_id), **payload.model_dump()}
     with session.begin():
-        item = session.scalar(
-            select(SavedItem)
-            .where(SavedItem.saved_item_id == saved_item_id, SavedItem.user_id == user_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if item is None:
-            raise AppError(404, "ITEM_NOT_FOUND", "저장한 짐을 찾을 수 없습니다.")
+        item = _lock_owned_item(session, user_id, saved_item_id)
         replay = replay_request(session, user_id, scope, key, request)
         if replay is not None:
             return ItemData.model_validate(replay)
@@ -96,3 +107,87 @@ def update_item_favorite(
         data = _item_data(item)
         save_response(session, user_id, scope, key, request, data)
     return data
+
+
+def save_item_photo(
+    session: Session,
+    user_id: str,
+    saved_item_id: UUID,
+    key: UUID,
+    *,
+    storage: ItemPhotoStorage,
+    content: bytes,
+    content_type: str,
+) -> ItemPhotoData:
+    validate_item_photo(content, content_type)
+    scope = "/api/v1/items/photo"
+    request = {
+        "saved_item_id": str(saved_item_id),
+        "content_type": content_type,
+        "sha256": sha256(content).hexdigest(),
+    }
+    attempted_key = None
+    try:
+        with session.begin():
+            item = _lock_owned_item(session, user_id, saved_item_id)
+            replay = replay_request(session, user_id, scope, key, request)
+            if replay is not None:
+                return ItemPhotoData.model_validate(replay)
+            previous_key = item.photo_object_key
+            data = ItemPhotoData(
+                saved_item_id=saved_item_id, photo_url=_item_photo_path(saved_item_id)
+            )
+            # S3가 파일을 저장한 뒤 응답이 끊겨도 정리할 수 있도록 키를 먼저 기록합니다.
+            attempted_key = f"item-photos/{saved_item_id}/{uuid4().hex}"
+            storage.put(attempted_key, content, content_type)
+            item.photo_object_key = attempted_key
+            save_response(session, user_id, scope, key, request, data)
+    except Exception:
+        if attempted_key is not None:
+            _recover_item_photo_upload(session, saved_item_id, storage, attempted_key, previous_key)
+        raise
+    # 새 연결을 커밋한 뒤 이전 객체를 지웁니다.
+    if previous_key is not None:
+        storage.discard(previous_key)
+    return data
+
+
+def _recover_item_photo_upload(
+    session: Session,
+    saved_item_id: UUID,
+    storage: ItemPhotoStorage,
+    attempted_key: str,
+    previous_key: str | None,
+) -> None:
+    try:
+        # 기존 쓰기가 끝날 때까지 기다려 커밋 응답이 끊긴 경우에도 실제 연결을 확인합니다.
+        with Session(bind=session.get_bind()) as recovery_session:
+            linked_key = recovery_session.scalar(
+                select(SavedItem.photo_object_key)
+                .where(SavedItem.saved_item_id == saved_item_id)
+                .with_for_update(read=True)
+            )
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "내 짐 사진 연결 확인 실패로 객체를 보관합니다 (신규=%s, 이전=%s, 오류=%s)",
+            attempted_key,
+            previous_key,
+            type(exc).__name__,
+        )
+        return
+
+    # 객체 키는 업로드마다 새로 만들어져 이후 요청에서 다시 연결되지 않습니다.
+    for key in (attempted_key, previous_key):
+        if key is not None and key != linked_key:
+            storage.discard(key)
+
+
+def read_item_photo(
+    session: Session, user_id: str, saved_item_id: UUID, storage: ItemPhotoStorage
+) -> tuple[bytes, str]:
+    with session.begin():
+        # 읽는 동안 사진 교체가 기존 객체를 지우지 못하게 합니다.
+        item = _lock_owned_item(session, user_id, saved_item_id, read_lock=True)
+        if item.photo_object_key is None:
+            raise AppError(404, "ITEM_PHOTO_NOT_FOUND", "저장한 짐에 연결된 사진이 없습니다.")
+        return storage.get(item.photo_object_key)

@@ -145,7 +145,9 @@ def test_existing_creation_receipt_remains_replayable(item_client, model_session
         mode="json", exclude={"is_favorite"}
     )
     receipt.request_hash = request_fingerprint(legacy_request)
-    receipt.response = {k: v for k, v in receipt.response.items() if k != "is_favorite"}
+    receipt.response = {
+        k: v for k, v in receipt.response.items() if k not in {"is_favorite", "photo_url"}
+    }
     model_session.commit()
     repeated = item_client.post("/api/v1/items", json=ITEM, headers=headers)
     assert repeated.status_code == 200
@@ -183,4 +185,5 @@ def test_migration_preserves_saved_items_with_false_default(model_session):
     row = model_session.scalar(select(SavedItem).where(SavedItem.saved_item_id == item_id))
     assert row.name == "기존 짐"
     assert row.is_favorite is False
+    assert row.photo_object_key is None
     command.check(config)
