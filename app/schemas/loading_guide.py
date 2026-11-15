@@ -42,12 +42,7 @@ class LoadingGuideData(BaseModel):
     steps: list[LoadingGuideStep] = Field(max_length=MAX_UNITS)
 
 
-class GeneratedGuideStep(LoadingGuideStep):
-    text: str = Field(min_length=1, max_length=300)
-
-
 class GeneratedGuide(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reply: str = Field(min_length=1, max_length=500)
-    steps: list[GeneratedGuideStep] = Field(max_length=MAX_UNITS)

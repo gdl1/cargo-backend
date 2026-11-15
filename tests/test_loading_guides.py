@@ -1,4 +1,3 @@
-import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
@@ -45,9 +44,9 @@ def post(client, path, payload, key=None):
     return client.post(path, json=payload, headers={"Idempotency-Key": str(key or uuid4())})
 
 
-def source(app, kind="saved"):
+def source(app, kind="saved", plan_input=PLAN):
     if kind == "saved":
-        response = post(app.client, "/api/v1/plans", PLAN)
+        response = post(app.client, "/api/v1/plans", plan_input)
         assert response.status_code == 201, response.text
         plan = response.json()["data"]
         response = post(app.client, f"/api/v1/plans/{plan['plan_id']}/calculations", {})
@@ -55,7 +54,7 @@ def source(app, kind="saved"):
         calculation = response.json()["data"]
         reference = {"plan_id": plan["plan_id"], "calculation_id": calculation["calculation_id"]}
     else:
-        response = post(app.client, "/api/v1/calculations/preview", {"plan": PLAN})
+        response = post(app.client, "/api/v1/calculations/preview", {"plan": plan_input})
         assert response.status_code == 201, response.text
         preview = response.json()["data"]
         calculation = preview["calculation"]
@@ -66,27 +65,14 @@ def source(app, kind="saved"):
     return reference, calculation, candidate
 
 
-def install_model(app, candidate, mutate=None, side_effect=None):
+def install_model(app, reply="선택한 배치의 순서대로 짐을 놓아 주세요.", side_effect=None):
     calls = []
 
     def generate(client, name, model, instructions, data):
         calls.append({"name": name, "instructions": instructions, "data": deepcopy(data)})
         if side_effect:
             side_effect()
-        value = {
-            "reply": "선택한 배치의 순서대로 짐을 놓아 주세요.",
-            "steps": [
-                {
-                    "order": p["load_order"],
-                    "placement_id": p["placement_id"],
-                    "text": "그림에 표시된 위치와 방향에 맞춰 놓아 주세요.",
-                }
-                for p in sorted(candidate["placements"], key=lambda p: p["load_order"])
-            ],
-        }
-        if mutate:
-            mutate(value)
-        return model.model_validate(value)
+        return model.model_validate({"reply": reply})
 
     app.monkeypatch.setattr(ResponsesClient, "call_function", generate)
     return calls
@@ -96,7 +82,7 @@ def install_model(app, candidate, mutate=None, side_effect=None):
 def test_guide_explains_exact_selected_layout_without_changing_plan(guide_app, kind):
     app = guide_app
     reference, calculation, candidate = source(app, kind)
-    calls = install_model(app, candidate)
+    calls = install_model(app)
     response = post(app.client, PATH, reference)
     assert response.status_code == 200, response.text
     data = response.json()["data"]
@@ -126,19 +112,18 @@ def test_guide_explains_exact_selected_layout_without_changing_plan(guide_app, k
 
 def test_guide_uses_historical_item_snapshot_after_plan_edit(guide_app):
     app = guide_app
-    reference, _, candidate = source(app)
+    reference, _, _ = source(app)
     with app.session.begin():
         plan = app.session.get(Plan, UUID(reference["plan_id"]))
         plan.items[0].name = "현재 바뀐 짐"
         plan.items[0].width_cm = 99
         plan.revision += 1
-    calls = install_model(app, candidate)
+    calls = install_model(app)
     response = post(app.client, PATH, reference)
     assert response.status_code == 200, response.text
     assert response.json()["data"]["source"] == "AI"
-    sent = json.dumps(calls[0]["data"], ensure_ascii=False)
-    assert "운반 상자" in sent
-    assert "현재 바뀐 짐" not in sent
+    assert calls[0]["data"] == {"적재 공간": ["트렁크"], "쌓는 짐이 있음": False}
+    assert all("운반 상자" in step["text"] for step in response.json()["data"]["steps"])
 
 
 @pytest.mark.parametrize("kind", ["saved", "preview"])
@@ -150,8 +135,11 @@ def test_guide_keeps_historical_vehicle_geometry_after_catalog_update(guide_app,
     app.monkeypatch.setattr(
         "app.services.calculations.get_vehicle_catalog", lambda: {legacy.vehicle_id: legacy}
     )
-    reference, calculation, candidate = source(app, kind)
+    reference, calculation, _ = source(app, kind)
     assert calculation["vehicle_data_version"] == "avante-demo-v2"
+    install_model(app)
+    before = post(app.client, PATH, reference)
+    assert before.status_code == 200, before.text
     current = get_vehicle_catalog()[legacy.vehicle_id].model_dump(mode="json")
     current["data_version"] = "avante-demo-v3"
     for profile in current["packing_profiles"]:
@@ -161,15 +149,10 @@ def test_guide_keeps_historical_vehicle_geometry_after_catalog_update(guide_app,
     app.monkeypatch.setattr(
         "app.services.calculations.get_vehicle_catalog", lambda: {updated.vehicle_id: updated}
     )
-    calls = install_model(app, candidate)
     response = post(app.client, PATH, reference)
     assert response.status_code == 200, response.text
     assert response.json()["data"]["source"] == "AI"
-    assert calls[0]["data"]["vehicle_data_version"] == "avante-demo-v2"
-    assert calls[0]["data"]["spaces"] == candidate["packing_spaces"]
-    assert calls[0]["data"]["placements"] == sorted(
-        candidate["placements"], key=lambda row: row["load_order"]
-    )
+    assert response.json() == before.json()
 
 
 def test_guide_accepts_requested_exclusion_alternative(guide_app):
@@ -184,7 +167,7 @@ def test_guide_accepts_requested_exclusion_alternative(guide_app):
         value["result_code"] = "EXCLUSION_OPTIONS_FOUND"
         value["is_success"] = False
         row.result_payload = value
-    install_model(app, candidate)
+    install_model(app)
     response = post(app.client, PATH, reference)
     assert response.status_code == 200, response.text
     assert response.json()["data"]["arrangement_id"] == reference["arrangement_id"]
@@ -204,7 +187,7 @@ def test_saved_guide_reference_must_belong_to_current_user_and_plan(
     guide_app, change, expected_code
 ):
     app = guide_app
-    reference, _, candidate = source(app)
+    reference, _, _ = source(app)
     if change == "missing_plan":
         reference["plan_id"] = str(uuid4())
     elif change == "missing_calculation":
@@ -217,7 +200,7 @@ def test_saved_guide_reference_must_belong_to_current_user_and_plan(
     else:
         with app.session.begin():
             app.session.get(Plan, UUID(reference["plan_id"])).user_id = "other-user"
-    calls = install_model(app, candidate)
+    calls = install_model(app)
     response = post(app.client, PATH, reference)
     assert response.status_code == 404
     assert response.json()["code"] == expected_code
@@ -227,7 +210,7 @@ def test_saved_guide_reference_must_belong_to_current_user_and_plan(
 @pytest.mark.parametrize("missing", [False, True])
 def test_preview_ownership_is_checked_before_model(guide_app, missing):
     app = guide_app
-    reference, _, candidate = source(app, "preview")
+    reference, _, _ = source(app, "preview")
     if missing:
         reference["preview_id"] = str(uuid4())
     else:
@@ -235,7 +218,7 @@ def test_preview_ownership_is_checked_before_model(guide_app, missing):
             app.session.get(
                 CalculationPreview, UUID(reference["preview_id"])
             ).user_id = "other-user"
-    calls = install_model(app, candidate)
+    calls = install_model(app)
     response = post(app.client, PATH, reference)
     assert response.status_code == 404
     assert response.json()["code"] == "PREVIEW_NOT_FOUND"
@@ -245,8 +228,8 @@ def test_preview_ownership_is_checked_before_model(guide_app, missing):
 @pytest.mark.parametrize("already_generated", [False, True])
 def test_expired_preview_is_rejected_even_for_cached_guide(guide_app, already_generated):
     app = guide_app
-    reference, _, candidate = source(app, "preview")
-    calls = install_model(app, candidate)
+    reference, _, _ = source(app, "preview")
+    calls = install_model(app)
     key = uuid4()
     if already_generated:
         assert post(app.client, PATH, reference, key).status_code == 200
@@ -261,9 +244,9 @@ def test_expired_preview_is_rejected_even_for_cached_guide(guide_app, already_ge
 
 def test_same_key_replays_without_model_and_other_reference_is_rejected(guide_app):
     app = guide_app
-    reference, _, candidate = source(app)
+    reference, _, _ = source(app)
     other, _, _ = source(app, "preview")
-    calls = install_model(app, candidate)
+    calls = install_model(app)
     key = uuid4()
     first = post(app.client, PATH, reference, key)
     repeated = post(app.client, PATH, reference, key)
@@ -277,8 +260,8 @@ def test_same_key_replays_without_model_and_other_reference_is_rejected(guide_ap
 
 def test_cached_guide_does_not_bypass_current_plan_ownership(guide_app):
     app = guide_app
-    reference, _, candidate = source(app)
-    calls = install_model(app, candidate)
+    reference, _, _ = source(app)
+    calls = install_model(app)
     key = uuid4()
     assert post(app.client, PATH, reference, key).status_code == 200
     with app.session.begin():
@@ -291,7 +274,7 @@ def test_cached_guide_does_not_bypass_current_plan_ownership(guide_app):
 
 def test_preview_expiring_during_model_call_does_not_save_a_guide(guide_app):
     app = guide_app
-    reference, _, candidate = source(app, "preview")
+    reference, _, _ = source(app, "preview")
 
     def expire():
         assert not app.session.in_transaction()
@@ -299,7 +282,7 @@ def test_preview_expiring_during_model_call_does_not_save_a_guide(guide_app):
             row = app.session.get(CalculationPreview, UUID(reference["preview_id"]))
             row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
 
-    install_model(app, candidate, side_effect=expire)
+    install_model(app, side_effect=expire)
     key = uuid4()
     response = post(app.client, PATH, reference, key)
     assert response.status_code == 410
@@ -313,12 +296,12 @@ def test_preview_expiring_during_model_call_does_not_save_a_guide(guide_app):
 @pytest.mark.parametrize("failure", [LlmUnavailable("provider detail"), TimeoutError("timeout")])
 def test_model_failure_returns_fallback_without_exposing_details(guide_app, failure):
     app = guide_app
-    reference, _, candidate = source(app)
+    reference, _, _ = source(app)
 
     def fail():
         raise failure
 
-    calls = install_model(app, candidate, side_effect=fail)
+    calls = install_model(app, side_effect=fail)
     key = uuid4()
     first = post(app.client, PATH, reference, key)
     assert first.status_code == 200, first.text
@@ -330,44 +313,21 @@ def test_model_failure_returns_fallback_without_exposing_details(guide_app, fail
 
 
 @pytest.mark.parametrize(
-    "invalid",
+    "reply",
     [
-        "unknown_id",
-        "missing_step",
-        "duplicate_step",
-        "reversed_order",
-        "new_coordinate",
-        "extreme_exponent",
-        "unsupported_load",
-        "safety",
+        "그림 좌표를 맞춰 주세요.",
+        "최종 폴딩 상태를 확인해 주세요.",
+        "트렁크(TRUNK)에 놓아 주세요.",
+        "높이 10cm에 놓아 주세요.",
+        "이 상자는 500kg까지 견딜 수 있습니다.",
+        "어떤 속도로 운전해도 안전을 보장합니다.",
+        "짐을 오른쪽에 세워 주세요.",
     ],
 )
-def test_untrusted_model_cannot_change_layout_facts_or_order(guide_app, invalid):
+def test_guide_falls_back_on_technical_or_unverified_summary(guide_app, reply):
     app = guide_app
-    reference, _, candidate = source(app)
-
-    def mutate(value):
-        if invalid == "unknown_id":
-            value["steps"][0]["placement_id"] = str(uuid4())
-        elif invalid == "missing_step":
-            value["steps"].pop()
-        elif invalid == "duplicate_step":
-            value["steps"][1] = deepcopy(value["steps"][0])
-        elif invalid == "reversed_order":
-            value["steps"][0]["order"], value["steps"][1]["order"] = (
-                value["steps"][1]["order"],
-                value["steps"][0]["order"],
-            )
-        elif invalid == "new_coordinate":
-            value["steps"][0]["text"] = "높이 999cm 위치에 놓아 주세요."
-        elif invalid == "extreme_exponent":
-            value["steps"][0]["text"] = "높이 1e999999999999999999999999cm 위치에 놓아 주세요."
-        elif invalid == "unsupported_load":
-            value["steps"][0]["text"] = "이 상자는 500kg까지 견딜 수 있습니다."
-        else:
-            value["reply"] = "어떤 속도로 운전해도 안전을 보장합니다."
-
-    install_model(app, candidate, mutate=mutate)
+    reference, _, _ = source(app)
+    install_model(app, reply=reply)
     response = post(app.client, PATH, reference)
     assert response.status_code == 200, response.text
     data = response.json()["data"]
@@ -376,10 +336,10 @@ def test_untrusted_model_cannot_change_layout_facts_or_order(guide_app, invalid)
 
 def test_legacy_calculation_without_snapshot_does_not_invent_guide(guide_app):
     app = guide_app
-    reference, _, candidate = source(app)
+    reference, _, _ = source(app)
     with app.session.begin():
         app.session.get(Calculation, UUID(reference["calculation_id"])).result_payload = None
-    calls = install_model(app, candidate)
+    calls = install_model(app)
     response = post(app.client, PATH, reference)
     assert response.status_code == 503
     assert response.json()["code"] == "CALCULATION_RESULT_UNAVAILABLE"
@@ -389,7 +349,7 @@ def test_legacy_calculation_without_snapshot_does_not_invent_guide(guide_app):
 @pytest.mark.parametrize("support", ["missing", "later", "self"])
 def test_corrupt_support_relationship_is_rejected_before_model(guide_app, support):
     app = guide_app
-    reference, calculation, candidate = source(app)
+    reference, calculation, _ = source(app)
     value = deepcopy(calculation)
     placements = value["arrangements"][0]["placements"]
     first, second = sorted(placements, key=lambda p: p["load_order"])
@@ -402,7 +362,7 @@ def test_corrupt_support_relationship_is_rejected_before_model(guide_app, suppor
     ]
     with app.session.begin():
         app.session.get(Calculation, UUID(reference["calculation_id"])).result_payload = value
-    calls = install_model(app, candidate)
+    calls = install_model(app)
     response = post(app.client, PATH, reference)
     assert response.status_code == 503
     assert response.json()["code"] == "CALCULATION_RESULT_UNAVAILABLE"
@@ -413,7 +373,7 @@ def test_corrupt_support_relationship_is_rejected_before_model(guide_app, suppor
 @pytest.mark.parametrize("damage", ["outside_space", "cross_space_support"])
 def test_guide_rejects_geometry_outside_its_saved_space(guide_app, kind, damage):
     app = guide_app
-    reference, calculation, candidate = source(app, kind)
+    reference, calculation, _ = source(app, kind)
     value = deepcopy(calculation)
     arrangement = value["arrangements"][0]
     first, second = sorted(arrangement["placements"], key=lambda p: p["load_order"])
@@ -450,7 +410,7 @@ def test_guide_rejects_geometry_outside_its_saved_space(guide_app, kind, damage)
             else app.session.get(CalculationPreview, UUID(reference["preview_id"]))
         )
         row.result_payload = value
-    calls = install_model(app, candidate)
+    calls = install_model(app)
     response = post(app.client, PATH, reference)
     assert response.status_code == 503
     assert response.json()["code"] == "CALCULATION_RESULT_UNAVAILABLE"
@@ -459,7 +419,7 @@ def test_guide_rejects_geometry_outside_its_saved_space(guide_app, kind, damage)
 
 def test_source_changing_during_generation_does_not_save_old_guide(guide_app):
     app = guide_app
-    reference, calculation, candidate = source(app, "preview")
+    reference, calculation, _ = source(app, "preview")
 
     def change_source():
         with app.session.begin():
@@ -468,7 +428,7 @@ def test_source_changing_during_generation_does_not_save_old_guide(guide_app):
             value["arrangements"][0]["packing_spaces"][0]["origin_cm"]["x_cm"] += 1
             row.result_payload = value
 
-    install_model(app, candidate, side_effect=change_source)
+    install_model(app, side_effect=change_source)
     key = uuid4()
     response = post(app.client, PATH, reference, key)
     assert response.status_code == 409
@@ -479,27 +439,111 @@ def test_source_changing_during_generation_does_not_save_old_guide(guide_app):
         )
 
 
-def test_guide_accepts_natural_location_text_grounded_in_selected_layout(guide_app):
+@pytest.mark.parametrize("kind", ["saved", "preview"])
+def test_camping_guide_describes_the_saved_position_and_rotation_in_korean(guide_app, kind):
     app = guide_app
-    reference, _, candidate = source(app)
-    assert all(p["z_cm"] == 0 for p in candidate["placements"])
-    sentence = "높이 10cm인 운반 상자를 트렁크 바닥의 표시된 위치에 놓아 주세요."
-
-    def describe(value):
-        value["steps"][0]["text"] = sentence
-
-    install_model(app, candidate, mutate=describe)
+    plan = {
+        **PLAN,
+        "items": [
+            {
+                "name": "캠핑 웨건",
+                "width_cm": 90,
+                "depth_cm": 50,
+                "height_cm": 30,
+                "quantity": 1,
+                "allowed_orientations": ["WDH"],
+            },
+            {
+                "name": "아이스박스",
+                "width_cm": 60,
+                "depth_cm": 40,
+                "height_cm": 42,
+                "quantity": 1,
+                "allowed_orientations": ["WHD"],
+            },
+        ],
+    }
+    reference, _, candidate = source(app, kind, plan)
+    placements = sorted(candidate["placements"], key=lambda p: p["load_order"])
+    assert [
+        (p["space_id"], p["x_cm"], p["y_cm"], p["z_cm"], p["orientation"]) for p in placements
+    ] == [("TRUNK", 0, 0, 0, "WDH"), ("TRUNK", 0, 50, 0, "WHD")]
+    install_model(app, reply="그림에 나온 순서대로 트렁크에 짐을 실어 주세요.")
     response = post(app.client, PATH, reference)
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data["source"] == "AI"
-    assert sentence in data["steps"][0]["text"]
+    assert data["reply"] == "그림에 나온 순서대로 트렁크에 짐을 실어 주세요."
+    assert data["steps"] == [
+        {
+            "order": 1,
+            "placement_id": placements[0]["placement_id"],
+            "text": "캠핑 웨건을 트렁크 입구 쪽 왼쪽 바닥에 긴 쪽이 좌우로 향하게 놓아 주세요.",
+        },
+        {
+            "order": 2,
+            "placement_id": placements[1]["placement_id"],
+            "text": (
+                "아이스박스를 트렁크 안쪽 왼쪽 바닥에 옆으로 눕혀 "
+                "긴 쪽이 좌우로 향하게 놓아 주세요."
+            ),
+        },
+    ]
+
+
+def test_guide_names_the_supporting_item_before_the_stacked_item(guide_app):
+    app = guide_app
+
+    def allow_stacking(items, settings):
+        return [
+            {
+                "lower_item_id": items[0]["item_id"],
+                "upper_item_id": items[1]["item_id"],
+                "allowed": True,
+                "basis": "LLM_ESTIMATE",
+                "reason": "테스트용 쌓기 판단",
+            }
+        ]
+
+    app.monkeypatch.setattr("app.services.llm.estimate_stacking", allow_stacking)
+    plan = {
+        **PLAN,
+        "items": [
+            {
+                "name": "나무 상자",
+                "width_cm": 90,
+                "depth_cm": 65,
+                "height_cm": 20,
+                "quantity": 1,
+                "allowed_orientations": ["WDH"],
+            },
+            {
+                "name": "캠핑 가방",
+                "width_cm": 60,
+                "depth_cm": 55,
+                "height_cm": 20,
+                "quantity": 1,
+                "allowed_orientations": ["WDH"],
+            },
+        ],
+    }
+    reference, _, candidate = source(app, "preview", plan)
+    lower, upper = sorted(candidate["placements"], key=lambda p: p["load_order"])
+    assert upper["supporting_placement_ids"] == [lower["placement_id"]]
+    calls = install_model(app)
+    response = post(app.client, PATH, reference)
+    assert response.status_code == 200, response.text
+    first, second = response.json()["data"]["steps"]
+    assert first["placement_id"] == lower["placement_id"]
+    assert second["placement_id"] == upper["placement_id"]
+    assert "나무 상자 위에" in second["text"]
+    assert calls[0]["data"]["쌓는 짐이 있음"]
 
 
 def test_concurrent_guide_request_cannot_duplicate_model_call(guide_app, settings):
     app = guide_app
-    reference, _, candidate = source(app)
-    calls = install_model(app, candidate)
+    reference, _, _ = source(app)
+    calls = install_model(app)
     key = uuid4()
     with request_guard(app.session, settings.demo_user_id, "/ai/loading-guides", key):
         response = post(app.client, PATH, reference, key)
@@ -551,7 +595,7 @@ def test_keep_existing_guide_preserves_loaded_items_and_only_adds_new_cargo(guid
     assert len(kept["placements"]) == len(fixed) + 1
     for placement in candidate["placements"]:
         assert placement in kept["placements"]
-    install_model(app, kept)
+    install_model(app)
     response = post(
         app.client,
         PATH,
@@ -563,7 +607,7 @@ def test_keep_existing_guide_preserves_loaded_items_and_only_adds_new_cargo(guid
     assert "기존 짐" in guide["reply"] and "새 짐만 추가" in guide["reply"]
     for step in guide["steps"]:
         if step["placement_id"] in fixed:
-            assert "이미 실린 짐" in step["text"]
-            assert "그대로 유지" in step["text"]
+            assert "이미 실은 운반 상자" in step["text"]
+            assert "현재 위치와 방향 그대로 두세요." in step["text"]
         else:
             assert "추가 상자" in step["text"]

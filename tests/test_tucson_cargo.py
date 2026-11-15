@@ -136,20 +136,8 @@ def test_connected_layout_survives_preview_save_guide_and_recalculation(
     application.dependency_overrides[get_db] = lambda: model_session
 
     def generate(client, name, schema, instructions, context):
-        (placement,) = context["placements"]
-        assert placement["spanning_space_id"] == "REAR_FOLDED"
-        return schema.model_validate(
-            {
-                "reply": "그림의 순서대로 짐을 놓아 주세요.",
-                "steps": [
-                    {
-                        "order": 1,
-                        "placement_id": placement["placement_id"],
-                        "text": "그림을 따라 놓아 주세요.",
-                    }
-                ],
-            }
-        )
+        assert context["적재 공간"] == ["접힌 뒷좌석", "트렁크"]
+        return schema.model_validate({"reply": "그림의 순서대로 짐을 놓아 주세요."})
 
     monkeypatch.setattr(ResponsesClient, "call_function", generate)
 
@@ -173,7 +161,9 @@ def test_connected_layout_survives_preview_save_guide_and_recalculation(
             {"preview_id": preview["preview_id"], "arrangement_id": candidate["arrangement_id"]},
             status=200,
         )
-        assert "접힌 2열(REAR_FOLDED)에 걸쳐" in guide["steps"][0]["text"]
+        assert "트렁크에서 접힌 뒷좌석까지 걸치도록" in guide["steps"][0]["text"]
+        assert "REAR_FOLDED" not in guide["steps"][0]["text"]
+        assert "좌석은 그림에 나온 상태인지 확인해 주세요." in guide["reply"]
         saved = post(
             "/api/v1/plans",
             {
