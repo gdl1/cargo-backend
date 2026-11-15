@@ -752,7 +752,9 @@ def respond(
         candidate = None
         if payload.selected_product_candidate_id is not None:
             candidate = get_candidate(session, payload.selected_product_candidate_id, user_id)
-            state["selected_product_candidate"] = candidate.model_dump(mode="json")
+            state["selected_product_candidate"] = candidate.model_dump(
+                mode="json", exclude={"image_url", "image_source_url"}
+            )
             state["candidate_confirmed"] = False
         if "item_dimensions" in answered:
             state["candidate_confirmed"] = True

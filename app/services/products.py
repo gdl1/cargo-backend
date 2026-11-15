@@ -18,6 +18,7 @@ from app.schemas.products import (
 )
 from app.services.llm import LlmUnavailable, ResponsesClient
 from app.services.operations import json_data, replay_request, save_response
+from app.services.product_photos import attach_product_photos
 
 
 class SourcedProduct(ProductSchema):
@@ -67,6 +68,7 @@ def find_products(
             "상식이나 비슷한 상품으로 치수를 추정하지 마세요. "
             "출처에 다른 치수가 있으면 출처별 후보를 "
             "분리하세요. 각 후보에는 실제로 확인한 근거 페이지 URL과 제목만 넣으세요. "
+            "가능하면 제품 상세 페이지를 근거로 사용하고, 제품명과 모델/옵션은 그 표기를 따르세요. "
             "출처에서 확인되지 않은 상태의 후보는 만들지 마세요. "
             "검색 결과가 없으면 candidates=[]입니다.",
             payload.model_dump(mode="json"),
@@ -86,13 +88,14 @@ def find_products(
         values["sources"] = sources
         for field in ("width_cm", "depth_cm", "height_cm"):
             values[field] = _confirmed_dimension(values[field])
-        candidate = ProductCandidateData(candidate_id=uuid4(), **values)
+        candidates.append(ProductCandidateData(candidate_id=uuid4(), **values))
+    attach_product_photos(candidates)
+    for candidate in candidates:
         session.add(
             ProductCandidate(
                 candidate_id=candidate.candidate_id, user_id=user_id, payload=json_data(candidate)
             )
         )
-        candidates.append(candidate)
     session.flush()
     return ProductSearchData(candidates=candidates)
 
