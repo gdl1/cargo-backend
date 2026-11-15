@@ -1,4 +1,4 @@
-# cargo-backend
+# chagokchagok-backend
 
 현대 앱 개발 공모전 백엔드입니다. FastAPI와 PostgreSQL로 차량 조회, 적재 계획 관리, 배치 계산, 자연어 요청, AI 배치 가이드와 모바일 푸시를 제공합니다.
 
@@ -31,7 +31,7 @@ docker compose up -d --wait db
 
 FastAPI는 PC에서 실행하고 PostgreSQL은 Docker에서 실행합니다. 5432 포트를 이미 쓰고 있다면 `.env`의 `POSTGRES_PORT`를 변경하세요.
 
-D 드라이브의 기존 가상환경을 사용한다면 `$cargoPython = 'D:\venvs\cargo-backend\Scripts\python.exe'`로 지정하고, 위 명령의 `.\.venv\Scripts\python.exe`를 `& $cargoPython`으로 바꾸면 됩니다. 명령은 저장소 최상위에서 실행합니다.
+D 드라이브에 별도 가상환경을 둔다면 `$chagokchagokPython = 'D:\venvs\chagokchagok-backend\Scripts\python.exe'`의 경로를 실제 환경에 맞게 지정하고, 위 명령의 `.\.venv\Scripts\python.exe`를 `& $chagokchagokPython`으로 바꾸면 됩니다. 명령은 저장소 최상위에서 실행합니다.
 
 ## DB 모델
 
@@ -238,11 +238,11 @@ GitHub Actions에서는 Ruff, Alembic과 전체 테스트를 실행합니다. �
 기본 검사는 외부 호출 없이 설정 여부만 확인하며 비밀값은 출력하지 않습니다. `--live`를 붙인 경우에만 실제 호출합니다. AI·검색 호출에는 요금이 발생할 수 있습니다.
 
 ```powershell
-$cargoPython = 'D:\venvs\cargo-backend\Scripts\python.exe'
-& $cargoPython -m app.check_integrations
-& $cargoPython -m app.check_integrations --live --service ai
-& $cargoPython -m app.check_integrations --live --service search
-& $cargoPython -m app.check_integrations --live --service push
+$chagokchagokPython = 'D:\venvs\chagokchagok-backend\Scripts\python.exe'
+& $chagokchagokPython -m app.check_integrations
+& $chagokchagokPython -m app.check_integrations --live --service ai
+& $chagokchagokPython -m app.check_integrations --live --service search
+& $chagokchagokPython -m app.check_integrations --live --service push
 ```
 
 `ai`는 한국어 예제 한 건, `search`는 웹 검색 응답, `push`는 Firebase 인증만 확인합니다. DB 변경이나 푸시 발송은 하지 않습니다. 설정 누락·실패 시 종료코드는 1입니다. 실제 상품 규격의 정확도, FCM 발송 권한·휴대폰 수신과 앱 응답 속도는 별도 확인해야 합니다.
@@ -252,16 +252,18 @@ $cargoPython = 'D:\venvs\cargo-backend\Scripts\python.exe'
 이미지는 실행에 필요한 코드만 포함하고 일반 사용자로 실행합니다. `.env`와 Firebase 인증 파일은 이미지에 포함하지 않습니다. 아래는 기존 Compose DB에 연결하는 로컬 검증 명령이며, 실행 중인 로컬 Uvicorn은 먼저 종료합니다.
 
 ```powershell
-docker compose -p cargo-backend up -d --wait db
-docker build -t cargo-backend:local .
-docker run --rm --env-file .env --network cargo-backend_default -e POSTGRES_HOST=db -e POSTGRES_PORT=5432 cargo-backend:local python -m alembic upgrade head
-docker run --rm --env-file .env --network cargo-backend_default -e POSTGRES_HOST=db -e POSTGRES_PORT=5432 cargo-backend:local python -m app.db.seed
-docker run -d --name cargo-api --restart unless-stopped --log-opt max-size=10m --log-opt max-file=3 --env-file .env --network cargo-backend_default -e POSTGRES_HOST=db -e POSTGRES_PORT=5432 -p 127.0.0.1:8000:8000 cargo-backend:local
-docker logs --tail 100 cargo-api
-docker inspect --format '{{.State.Health.Status}}' cargo-api
+docker compose -p chagokchagok-backend up -d --wait db
+docker build -t chagokchagok-backend:local .
+docker run --rm --env-file .env --network chagokchagok-backend_default -e POSTGRES_HOST=db -e POSTGRES_PORT=5432 chagokchagok-backend:local python -m alembic upgrade head
+docker run --rm --env-file .env --network chagokchagok-backend_default -e POSTGRES_HOST=db -e POSTGRES_PORT=5432 chagokchagok-backend:local python -m app.db.seed
+docker run -d --name chagokchagok-api --restart unless-stopped --log-opt max-size=10m --log-opt max-file=3 --env-file .env --network chagokchagok-backend_default -e POSTGRES_HOST=db -e POSTGRES_PORT=5432 -p 127.0.0.1:8000:8000 chagokchagok-backend:local
+docker logs --tail 100 chagokchagok-api
+docker inspect --format '{{.State.Health.Status}}' chagokchagok-api
 ```
 
-DB 상태 확인에 성공하면 컨테이너 상태가 `healthy`가 됩니다. 기존과 같은 `/docs`에서 API를 확인합니다. 재실행할 때는 `docker rm -f cargo-api`로 기존 API 컨테이너를 제거한 뒤 이미지 빌드부터 반복합니다. DB 볼륨은 삭제하지 않습니다.
+기존 로컬 DB를 계속 사용하려면 `docker compose ls --all`에서 이전 프로젝트 이름을 확인하세요. 컨테이너를 이미 내렸다면 `docker volume ls`의 `<프로젝트명>_postgres_data`에서 프로젝트 이름을 확인할 수 있습니다. Compose 명령의 `-p`에 그 이름을 넣고, 컨테이너로 실행할 때는 `--network`에도 해당 프로젝트의 `<프로젝트명>_default`를 지정하세요. `.env`에는 기존 DB 이름과 계정을 사용합니다. 새 프로젝트 이름과 DB 이름으로 옮기려면 기존 데이터를 백업한 뒤 새 DB에 복원하세요.
+
+DB 상태 확인에 성공하면 컨테이너 상태가 `healthy`가 됩니다. 기존과 같은 `/docs`에서 API를 확인합니다. 재실행할 때는 `docker rm -f chagokchagok-api`로 기존 API 컨테이너를 제거한 뒤 이미지 빌드부터 반복합니다. DB 볼륨은 삭제하지 않습니다. 이름 변경 전 API 컨테이너가 8000번 포트를 사용 중이라면 새 컨테이너를 시작하기 전에 이전 컨테이너를 중지하세요.
 
 Firebase 인증 파일이 필요하면 `docker run`에 읽기 전용 마운트를 추가하고 컨테이너 안의 경로를 지정합니다. 호스트 파일 경로를 `.env`에 적는 것만으로 컨테이너에 파일이 전달되지는 않습니다.
 
@@ -269,13 +271,13 @@ Firebase 인증 파일이 필요하면 `docker run`에 읽기 전용 마운트�
 --mount "type=bind,source=D:\secrets\firebase-service-account.json,target=/run/secrets/firebase.json,readonly" -e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase.json
 ```
 
-위 옵션은 이미지 이름 `cargo-backend:local` 앞에 넣고 실제 파일 경로로 바꿉니다. Linux에서는 컨테이너 사용자 UID 10001이 해당 파일을 읽을 수 있어야 합니다. 팀용 서버에는 실제 DB·인증 설정을 주입하고, 공유 데모 데이터의 접근 범위와 HTTPS 주소를 정한 뒤 Base URL·`/docs`·`/openapi.json`의 외부 접속을 확인합니다. 로컬 컨테이너 실행만으로 외부 배포가 완료되는 것은 아닙니다.
+위 옵션은 이미지 이름 `chagokchagok-backend:local` 앞에 넣고 실제 파일 경로로 바꿉니다. Linux에서는 컨테이너 사용자 UID 10001이 해당 파일을 읽을 수 있어야 합니다. 팀용 서버에는 실제 DB·인증 설정을 주입하고, 공유 데모 데이터의 접근 범위와 HTTPS 주소를 정한 뒤 Base URL·`/docs`·`/openapi.json`의 외부 접속을 확인합니다. 로컬 컨테이너 실행만으로 외부 배포가 완료되는 것은 아닙니다.
 
 CI에서는 이미지 빌드, 이미지 안의 마이그레이션·차량 등록, 실제 서버·DB 상태와 OpenAPI 응답까지 검사합니다.
 
 ## 종료
 
-서버 터미널에서 `Ctrl+C`를 누른 뒤 `docker compose down`으로 PostgreSQL을 종료합니다. 다음에 실행할 때도 DB 데이터는 볼륨에 남아 있습니다.
+서버 터미널에서 `Ctrl+C`를 누른 뒤 `docker compose down`으로 PostgreSQL을 종료합니다. 시작할 때 `-p`를 지정했다면 종료할 때도 같은 프로젝트 이름을 지정하세요. 다음에 실행할 때도 DB 데이터는 볼륨에 남아 있습니다.
 
 ## 패키지
 

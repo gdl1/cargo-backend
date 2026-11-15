@@ -27,7 +27,7 @@ def settings() -> Settings:
         postgres_port=5432,
         postgres_user="unit_test",
         postgres_password=SecretStr("unit_test_only"),
-        postgres_db="cargo_unit_test",
+        postgres_db="chagokchagok_unit_test",
         db_connect_timeout=1,
         db_statement_timeout_ms=1000,
         openai_api_key=None,

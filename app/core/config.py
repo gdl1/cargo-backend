@@ -8,16 +8,16 @@ from sqlalchemy import URL
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "Cargo Backend"
+    app_name: str = "Chagokchagok Backend"
     app_env: Literal["local", "test", "production"] = "local"
     demo_user_id: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
     ] = "demo-user"
     postgres_host: str = "127.0.0.1"
     postgres_port: int = Field(default=5432, ge=1, le=65535)
-    postgres_user: str = "cargo"
+    postgres_user: str = "chagokchagok"
     postgres_password: SecretStr
-    postgres_db: str = "cargo"
+    postgres_db: str = "chagokchagok"
     db_connect_timeout: int = Field(default=3, ge=1, le=30)
     db_statement_timeout_ms: int = Field(default=5000, ge=100, le=60000)
     calculation_timeout_seconds: float = Field(default=2.0, gt=0, le=30)

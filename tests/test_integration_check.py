@@ -13,7 +13,7 @@ def check_settings(settings, monkeypatch, tmp_path):
     credentials = tmp_path / "private-credential.json"
     credentials.write_text("{}", encoding="utf-8")
     settings.openai_api_key = SecretStr("private-api-key")
-    settings.firebase_project_id = "cargo-test"
+    settings.firebase_project_id = "chagokchagok-test"
     settings.google_application_credentials = str(credentials)
     settings.notification_api_key = SecretStr("private-notification-key-1234567890")
     monkeypatch.setattr(check_integrations, "Settings", lambda: settings)
