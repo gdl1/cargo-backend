@@ -121,7 +121,7 @@ jobs:
           set -euo pipefail
           printf '배포 커밋 %s\n' "$GITHUB_SHA"
           command_id=$(aws ssm send-command \
-            --document-name ChagokchagokDeploy \
+            --document-name chagokchagokDeploy \
             --instance-ids "$EC2_INSTANCE_ID" \
             --parameters "CommitSha=$GITHUB_SHA" \
             --timeout-seconds 120 \
