@@ -921,8 +921,9 @@ def test_ai_conversation_ownership(ai_client, model_session):
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("photo_available", [True, False])
 def test_product_search_sources_null_precision_and_idempotency(
-    ai_client, model_session, monkeypatch
+    ai_client, model_session, monkeypatch, photo_available
 ):
     source = {"url": "https://example.com/chair", "title": "제품 규격"}
     candidates = [
@@ -948,12 +949,24 @@ def test_product_search_sources_null_precision_and_idempotency(
         },
     ]
     calls = []
+    checked_pages = []
 
     def fake_search(*args, **kwargs):
         calls.append(True)
         return SourcedProducts(candidates=candidates), {source["url"]}
 
+    def read_photo_page(url, deadline):
+        checked_pages.append(url)
+        if not photo_available:
+            raise TimeoutError
+        return url, (
+            '<script type="application/ld+json">'
+            '{"@type":"Product","name":"의자 A","image":"/chair.jpg"}</script>'
+        )
+
     monkeypatch.setattr(ResponsesClient, "search", fake_search)
+    monkeypatch.setattr("app.services.product_photos._read_public_html", read_photo_page)
+    monkeypatch.setattr("app.services.product_photos._public_address", lambda host: "93.184.215.14")
     headers = {"Idempotency-Key": str(uuid4())}
     response = ai_client.post("/api/v1/products/search", json={"query": "의자"}, headers=headers)
     assert response.status_code == 200, response.text
@@ -961,12 +974,15 @@ def test_product_search_sources_null_precision_and_idempotency(
     assert len(data) == 1
     assert data[0]["width_cm"] is None
     assert data[0]["depth_cm"] == 20
+    assert data[0]["image_url"] == ("https://example.com/chair.jpg" if photo_available else None)
+    assert data[0]["image_source_url"] == (source["url"] if photo_available else None)
     assert data[0]["requires_confirmation"] is True
     assert (
         ai_client.post("/api/v1/products/search", json={"query": "의자"}, headers=headers).json()
         == response.json()
     )
     assert len(calls) == 1
+    assert checked_pages == [source["url"]]
     assert model_session.scalar(select(func.count()).select_from(ProductCandidate)) == 1
     model_session.commit()
     reused = ai_client.post("/api/v1/products/search", json={"query": "다른 의자"}, headers=headers)

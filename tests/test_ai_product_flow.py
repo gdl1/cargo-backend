@@ -15,6 +15,7 @@ from app.services.products import SourcedProducts
 
 pytestmark = pytest.mark.integration
 SOURCE = {"url": "https://example.com/chair", "title": "의자 제품 규격"}
+PHOTO_URL = "https://images.example.com/chair.jpg"
 CONTEXT = {"scenario": "CHECK_ITEM", "vehicle_id": "avante_demo", "cargo_state": "EMPTY"}
 BOX = {"name": "상자", "width_cm": 10, "depth_cm": 10, "height_cm": 10, "quantity": 1}
 
@@ -29,6 +30,8 @@ def product_client(application, model_session, monkeypatch):
         if name == "estimate_stacking":
             return StackingEstimates(assessments=[])
         assert name == "interpret_cargo_request"
+        if data["selected_product_candidate"]:
+            assert "image_url" not in data["selected_product_candidate"]
         values = {field: None for field in CargoIntent.model_fields}
         values.update(
             item_changes=[], ambiguous_item_reference=False, ambiguous_required_quantity=False
@@ -70,6 +73,15 @@ def product_client(application, model_session, monkeypatch):
 
     monkeypatch.setattr(ResponsesClient, "call_function", interpret)
     monkeypatch.setattr(ResponsesClient, "search", search)
+    monkeypatch.setattr(
+        "app.services.product_photos._read_public_html",
+        lambda url, deadline: (
+            url,
+            '<script type="application/ld+json">'
+            f'{{"@type":"Product","name":"캠핑 의자 A","image":"{PHOTO_URL}"}}</script>',
+        ),
+    )
+    monkeypatch.setattr("app.services.product_photos._public_address", lambda host: "93.184.215.14")
     with TestClient(application) as client:
         yield client
 
@@ -104,6 +116,10 @@ def search_products(client, context):
     assert result["status"] == "NEEDS_INPUT"
     assert result["preview_id"] is None
     assert len(result["product_candidates"]) == 2
+    assert all(
+        (candidate["image_url"], candidate["image_source_url"]) == (PHOTO_URL, SOURCE["url"])
+        for candidate in result["product_candidates"]
+    )
     return result
 
 

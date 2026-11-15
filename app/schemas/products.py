@@ -61,6 +61,8 @@ class ProductCandidateData(ProductSchema):
     height_cm: PlanCentimeters | None = None
     dimension_source: Literal["PRODUCT_SOURCE"] = "PRODUCT_SOURCE"
     sources: list[ProductSource]
+    image_url: str | None = Field(default=None, description="제품 카드용 대표 사진의 HTTPS 주소")
+    image_source_url: str | None = Field(default=None, description="사진을 확인한 제품 상세 페이지")
     requires_confirmation: Literal[True] = True
 
 
