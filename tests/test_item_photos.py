@@ -2,7 +2,7 @@ from io import BytesIO
 from uuid import uuid4
 
 import pytest
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ReadTimeoutError
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import event
@@ -157,6 +157,43 @@ def test_failed_replacement_preserves_photo_and_can_be_retried(photo_client, mon
     photo = client.get(path)
     assert photo.headers["content-type"] == "image/png"
     assert photo.content == replacement
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("has_existing_photo", [False, True], ids=["first-photo", "replacement"])
+def test_lost_s3_upload_response_cleans_up_the_attempt(
+    photo_client, monkeypatch, has_existing_photo
+):
+    client, s3 = photo_client
+    path = f"/api/v1/items/{_register(client)['saved_item_id']}/photo"
+    original, replacement, request_key = _image(), _image(color="blue"), uuid4()
+    if has_existing_photo:
+        assert _upload(client, path, original).status_code == 200
+    existing_objects = s3.objects.copy()
+
+    put_object = s3.put_object
+
+    def store_then_lose_response(**kwargs):
+        put_object(**kwargs)
+        raise ReadTimeoutError(endpoint_url="https://s3.example.com")
+
+    with monkeypatch.context() as context:
+        context.setattr(s3, "put_object", store_then_lose_response)
+        response = _upload(client, path, replacement, request_key)
+    assert response.status_code == 503
+    assert response.json()["code"] == "ITEM_PHOTO_STORAGE_UNAVAILABLE"
+    assert s3.put_count == len(existing_objects) + 1
+    assert s3.objects == existing_objects
+    photo = client.get(path)
+    if has_existing_photo:
+        assert photo.content == original
+    else:
+        assert photo.status_code == 404
+        assert photo.json()["code"] == "ITEM_PHOTO_NOT_FOUND"
+
+    assert _upload(client, path, replacement, request_key).status_code == 200
+    assert list(s3.objects.values()) == [(replacement, "image/jpeg")]
+    assert client.get(path).content == replacement
 
 
 @pytest.mark.integration

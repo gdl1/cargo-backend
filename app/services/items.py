@@ -126,7 +126,7 @@ def save_item_photo(
         "content_type": content_type,
         "sha256": sha256(content).hexdigest(),
     }
-    uploaded_key = None
+    attempted_key = None
     try:
         with session.begin():
             item = _lock_owned_item(session, user_id, saved_item_id)
@@ -134,17 +134,17 @@ def save_item_photo(
             if replay is not None:
                 return ItemPhotoData.model_validate(replay)
             previous_key = item.photo_object_key
-            object_key = f"item-photos/{saved_item_id}/{uuid4().hex}"
             data = ItemPhotoData(
                 saved_item_id=saved_item_id, photo_url=_item_photo_path(saved_item_id)
             )
-            storage.put(object_key, content, content_type)
-            uploaded_key = object_key
-            item.photo_object_key = object_key
+            # S3가 파일을 저장한 뒤 응답이 끊겨도 정리할 수 있도록 키를 먼저 기록합니다.
+            attempted_key = f"item-photos/{saved_item_id}/{uuid4().hex}"
+            storage.put(attempted_key, content, content_type)
+            item.photo_object_key = attempted_key
             save_response(session, user_id, scope, key, request, data)
     except Exception:
-        if uploaded_key is not None:
-            _recover_item_photo_upload(session, saved_item_id, storage, uploaded_key, previous_key)
+        if attempted_key is not None:
+            _recover_item_photo_upload(session, saved_item_id, storage, attempted_key, previous_key)
         raise
     # 새 연결을 커밋한 뒤 이전 객체를 지웁니다.
     if previous_key is not None:
@@ -156,7 +156,7 @@ def _recover_item_photo_upload(
     session: Session,
     saved_item_id: UUID,
     storage: ItemPhotoStorage,
-    uploaded_key: str,
+    attempted_key: str,
     previous_key: str | None,
 ) -> None:
     try:
@@ -170,14 +170,14 @@ def _recover_item_photo_upload(
     except SQLAlchemyError as exc:
         logger.warning(
             "내 짐 사진 연결 확인 실패로 객체를 보관합니다 (신규=%s, 이전=%s, 오류=%s)",
-            uploaded_key,
+            attempted_key,
             previous_key,
             type(exc).__name__,
         )
         return
 
     # 객체 키는 업로드마다 새로 만들어져 이후 요청에서 다시 연결되지 않습니다.
-    for key in (uploaded_key, previous_key):
+    for key in (attempted_key, previous_key):
         if key is not None and key != linked_key:
             storage.discard(key)
 

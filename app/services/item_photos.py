@@ -87,7 +87,9 @@ class ItemPhotoStorage:
         return content, content_type
 
     def discard(self, key: str) -> None:
+        if not self.bucket or not self.region:
+            return
         try:
             self.client.delete_object(Bucket=self.bucket, Key=key)
         except (BotoCoreError, ClientError) as exc:
-            logger.warning("사용하지 않는 내 짐 사진 정리 실패 (%s)", type(exc).__name__)
+            logger.warning("내 짐 사진 정리 실패 (객체=%s, 오류=%s)", key, type(exc).__name__)
