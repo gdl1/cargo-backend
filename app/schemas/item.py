@@ -38,6 +38,12 @@ class ItemCreate(PlanSchema):
 class ItemData(ItemCreate):
     saved_item_id: UUID
     created_at: AwareDatetime
+    photo_url: str | None = Field(default=None, description="저장한 짐 사진을 여는 API 경로")
+
+
+class ItemPhotoData(PlanSchema):
+    saved_item_id: UUID
+    photo_url: str
 
 
 class ItemListData(PlanSchema):

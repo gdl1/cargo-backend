@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-6.1-terra"
     llm_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     llm_max_output_tokens: int = Field(default=4000, ge=256, le=16000)
+    item_photo_s3_bucket: str = ""
+    item_photo_s3_region: str = ""
     notification_api_key: SecretStr | None = None
     firebase_project_id: str = ""
     google_application_credentials: str = ""
