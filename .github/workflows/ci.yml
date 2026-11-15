@@ -24,13 +24,13 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: cargo
+          POSTGRES_USER: chagokchagok
           POSTGRES_PASSWORD: ci_only_password
-          POSTGRES_DB: cargo_test
+          POSTGRES_DB: chagokchagok_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U cargo -d cargo_test"
+          --health-cmd "pg_isready -U chagokchagok -d chagokchagok_test"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
@@ -38,9 +38,9 @@ jobs:
     env:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: "5432"
-      POSTGRES_USER: cargo
+      POSTGRES_USER: chagokchagok
       POSTGRES_PASSWORD: ci_only_password
-      POSTGRES_DB: cargo_test
+      POSTGRES_DB: chagokchagok_test
       DB_CONNECT_TIMEOUT: "3"
       DB_STATEMENT_TIMEOUT_MS: "5000"
       RUN_DB_TESTS: "1"
@@ -76,13 +76,13 @@ jobs:
 
       - name: 서버 이미지 빌드와 실행 검사
         run: |
-          docker build --tag cargo-backend:ci .
-          cargo_docker_env=(--env POSTGRES_HOST --env POSTGRES_PORT --env POSTGRES_USER --env POSTGRES_PASSWORD --env POSTGRES_DB)
-          docker run --rm --network host "${cargo_docker_env[@]}" cargo-backend:ci python -m alembic upgrade head
-          docker run --rm --network host "${cargo_docker_env[@]}" cargo-backend:ci python -m app.db.seed
-          docker run --rm --network host "${cargo_docker_env[@]}" cargo-backend:ci python -m alembic check
-          docker run --detach --name cargo-api-ci --network host "${cargo_docker_env[@]}" cargo-backend:ci
-          trap 'docker logs cargo-api-ci; docker rm --force cargo-api-ci' EXIT
+          docker build --tag chagokchagok-backend:ci .
+          chagokchagok_docker_env=(--env POSTGRES_HOST --env POSTGRES_PORT --env POSTGRES_USER --env POSTGRES_PASSWORD --env POSTGRES_DB)
+          docker run --rm --network host "${chagokchagok_docker_env[@]}" chagokchagok-backend:ci python -m alembic upgrade head
+          docker run --rm --network host "${chagokchagok_docker_env[@]}" chagokchagok-backend:ci python -m app.db.seed
+          docker run --rm --network host "${chagokchagok_docker_env[@]}" chagokchagok-backend:ci python -m alembic check
+          docker run --detach --name chagokchagok-api-ci --network host "${chagokchagok_docker_env[@]}" chagokchagok-backend:ci
+          trap 'docker logs chagokchagok-api-ci; docker rm --force chagokchagok-api-ci' EXIT
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:8000/api/v1/health/db > /dev/null; then
               break

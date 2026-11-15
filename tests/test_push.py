@@ -15,7 +15,7 @@ from app.services.push import PushSender, _AuthRequest, _retry_after
 
 @pytest.fixture
 def sender(settings: Settings) -> PushSender:
-    settings.firebase_project_id = "cargo-test-project"
+    settings.firebase_project_id = "chagokchagok-test-project"
     settings.google_application_credentials = "/not-a-real-credential.json"
     result = PushSender(settings)
     result._credentials = Mock(valid=True, token="private-access-token")
@@ -50,14 +50,16 @@ def fcm_error(status, code=None):
 
 
 def test_notification_contains_only_fixed_text_and_identifiers(sender, monkeypatch):
-    session = mock_transport(monkeypatch, body={"name": "projects/cargo-test-project/messages/id"})
+    session = mock_transport(
+        monkeypatch, body={"name": "projects/chagokchagok-test-project/messages/id"}
+    )
     notification_id, plan_id = uuid4(), uuid4()
     result = sender.send("private-device-token", notification_id, plan_id)
     assert result.status == "ACCEPTED"
     session.post.assert_called_once()
     url = session.post.call_args.args[0]
     request = session.post.call_args.kwargs
-    assert url == "https://fcm.googleapis.com/v1/projects/cargo-test-project/messages:send"
+    assert url == "https://fcm.googleapis.com/v1/projects/chagokchagok-test-project/messages:send"
     assert request["timeout"] == (5.0, 5.0)
     assert request["allow_redirects"] is False
     message = request["json"]["message"]

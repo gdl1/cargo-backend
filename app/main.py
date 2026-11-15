@@ -33,7 +33,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await run_in_threadpool(engine.dispose)
 
     application = FastAPI(
-        title="Cargo Backend",
+        title="Chagokchagok Backend",
         version="0.1.0",
         description="차량 기준 데이터와 적재 계획 백엔드",
         lifespan=lifespan,
