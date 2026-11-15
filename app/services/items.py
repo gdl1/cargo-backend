@@ -1,7 +1,9 @@
+import logging
 from hashlib import sha256
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, true
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
 
 from app.core.exceptions import AppError
@@ -9,6 +11,8 @@ from app.models.item import SavedItem
 from app.schemas.item import ItemCreate, ItemData, ItemFavoriteUpdate, ItemListData, ItemPhotoData
 from app.services.item_photos import ItemPhotoStorage, validate_item_photo
 from app.services.operations import replay_request, save_response
+
+logger = logging.getLogger(__name__)
 
 
 def _item_photo_path(saved_item_id: UUID) -> str:
@@ -122,25 +126,60 @@ def save_item_photo(
         "content_type": content_type,
         "sha256": sha256(content).hexdigest(),
     }
-    with session.begin():
-        item = _lock_owned_item(session, user_id, saved_item_id)
-        replay = replay_request(session, user_id, scope, key, request)
-        if replay is not None:
-            return ItemPhotoData.model_validate(replay)
-        previous_key = item.photo_object_key
-        object_key = f"item-photos/{saved_item_id}/{uuid4().hex}"
-        data = ItemPhotoData(saved_item_id=saved_item_id, photo_url=_item_photo_path(saved_item_id))
-        storage.put(object_key, content, content_type)
-        try:
+    uploaded_key = None
+    try:
+        with session.begin():
+            item = _lock_owned_item(session, user_id, saved_item_id)
+            replay = replay_request(session, user_id, scope, key, request)
+            if replay is not None:
+                return ItemPhotoData.model_validate(replay)
+            previous_key = item.photo_object_key
+            object_key = f"item-photos/{saved_item_id}/{uuid4().hex}"
+            data = ItemPhotoData(
+                saved_item_id=saved_item_id, photo_url=_item_photo_path(saved_item_id)
+            )
+            storage.put(object_key, content, content_type)
+            uploaded_key = object_key
             item.photo_object_key = object_key
             save_response(session, user_id, scope, key, request, data)
-        except Exception:
-            storage.discard(object_key)
-            raise
+    except Exception:
+        if uploaded_key is not None:
+            _recover_item_photo_upload(session, saved_item_id, storage, uploaded_key, previous_key)
+        raise
     # 새 연결을 커밋한 뒤 이전 객체를 지웁니다.
     if previous_key is not None:
         storage.discard(previous_key)
     return data
+
+
+def _recover_item_photo_upload(
+    session: Session,
+    saved_item_id: UUID,
+    storage: ItemPhotoStorage,
+    uploaded_key: str,
+    previous_key: str | None,
+) -> None:
+    try:
+        # 기존 쓰기가 끝날 때까지 기다려 커밋 응답이 끊긴 경우에도 실제 연결을 확인합니다.
+        with Session(bind=session.get_bind()) as recovery_session:
+            linked_key = recovery_session.scalar(
+                select(SavedItem.photo_object_key)
+                .where(SavedItem.saved_item_id == saved_item_id)
+                .with_for_update(read=True)
+            )
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "내 짐 사진 연결 확인 실패로 객체를 보관합니다 (신규=%s, 이전=%s, 오류=%s)",
+            uploaded_key,
+            previous_key,
+            type(exc).__name__,
+        )
+        return
+
+    # 객체 키는 업로드마다 새로 만들어져 이후 요청에서 다시 연결되지 않습니다.
+    for key in (uploaded_key, previous_key):
+        if key is not None and key != linked_key:
+            storage.discard(key)
 
 
 def read_item_photo(

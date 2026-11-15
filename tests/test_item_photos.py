@@ -5,6 +5,8 @@ import pytest
 from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 from PIL import Image
+from sqlalchemy import event
+from sqlalchemy.exc import OperationalError
 
 from app.api.dependencies import get_current_user_id
 from app.db.session import get_db
@@ -155,6 +157,58 @@ def test_failed_replacement_preserves_photo_and_can_be_retried(photo_client, mon
     photo = client.get(path)
     assert photo.headers["content-type"] == "image/png"
     assert photo.content == replacement
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("commit_completed", [False, True], ids=["rollback", "commit-ack-lost"])
+def test_transaction_exit_recovery_keeps_the_linked_photo(
+    photo_client, model_session, commit_completed
+):
+    client, s3 = photo_client
+    path = f"/api/v1/items/{_register(client)['saved_item_id']}/photo"
+    original, replacement, request_key = _image(), _image(color="blue"), uuid4()
+    assert _upload(client, path, original).status_code == 200
+
+    def fail_commit(_session):
+        raise RuntimeError("커밋 응답 오류")
+
+    event_name = "after_commit" if commit_completed else "before_commit"
+    event.listen(model_session, event_name, fail_commit, once=True)
+    assert _upload(client, path, replacement, request_key).status_code == 500
+    # 실제 API처럼 커밋 오류가 발생한 요청의 세션을 정리합니다.
+    model_session.close()
+
+    linked_photo = replacement if commit_completed else original
+    assert list(s3.objects.values()) == [(linked_photo, "image/jpeg")]
+    assert client.get(path).content == linked_photo
+    assert _upload(client, path, replacement, request_key).status_code == 200
+    assert s3.put_count == (2 if commit_completed else 3)
+    assert list(s3.objects.values()) == [(replacement, "image/jpeg")]
+
+
+@pytest.mark.integration
+def test_transaction_exit_recovery_keeps_both_photos_if_db_check_fails(
+    photo_client, model_session, monkeypatch, caplog
+):
+    client, s3 = photo_client
+    path = f"/api/v1/items/{_register(client)['saved_item_id']}/photo"
+    original, replacement = _image(), _image(color="blue")
+    assert _upload(client, path, original).status_code == 200
+
+    def lose_commit_ack(_session):
+        raise RuntimeError("커밋 응답 오류")
+
+    def unavailable_session(*args, **kwargs):
+        raise OperationalError("", {}, ConnectionError("데이터베이스 연결 실패"))
+
+    event.listen(model_session, "after_commit", lose_commit_ack, once=True)
+    monkeypatch.setattr(items, "Session", unavailable_session)
+    assert _upload(client, path, replacement).status_code == 500
+    model_session.close()
+
+    assert list(s3.objects.values()) == [(original, "image/jpeg"), (replacement, "image/jpeg")]
+    assert client.get(path).content == replacement
+    assert "내 짐 사진 연결 확인 실패" in caplog.text
 
 
 @pytest.mark.integration
