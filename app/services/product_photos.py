@@ -185,7 +185,12 @@ def _matching_image_url(
 ) -> str | None:
     products = page.products
     if not products and page.meta.get("og:type", "").strip().lower() == "product":
-        products = [{"name": page.meta.get("og:title"), "image": page.meta.get("og:image")}]
+        products = [
+            {
+                "name": page.meta.get("og:title"),
+                "image": [page.meta.get("og:image"), page.meta.get("og:image:secure_url")],
+            }
+        ]
     images = set()
     for product in products:
         name = product.get("name")
@@ -235,7 +240,7 @@ def _photos_on_page(
                 public_hosts[host] = _public_address(host) is not None
             except OSError:
                 public_hosts[host] = False
-        if public_hosts[host]:
+        if public_hosts[host] and monotonic() < deadline:
             photos[candidate.candidate_id] = photo
     return photos
 
@@ -260,11 +265,18 @@ def attach_product_photos(candidates: list[ProductCandidateData]) -> None:
         future.add_done_callback(_release_worker)
         lookups[url] = future
 
-    done, _ = wait(lookups.values(), timeout=max(0, deadline - monotonic()))
     for url, future in lookups.items():
-        if future in done:
-            photos = future.result()
-            for candidate in sources[url]:
-                if candidate.image_url is None and candidate.candidate_id in photos:
-                    candidate.image_url = photos[candidate.candidate_id]
-                    candidate.image_source_url = url
+        matches = sources[url]
+        if all(candidate.image_url is not None for candidate in matches):
+            future.cancel()
+            continue
+
+        done, _ = wait((future,), timeout=max(0, deadline - monotonic()))
+        if future not in done:
+            continue
+
+        photos = future.result()
+        for candidate in matches:
+            if candidate.image_url is None and candidate.candidate_id in photos:
+                candidate.image_url = photos[candidate.candidate_id]
+                candidate.image_source_url = url

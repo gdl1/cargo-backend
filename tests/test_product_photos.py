@@ -1,11 +1,12 @@
 import json
 import socket
+from concurrent.futures import Future
 from time import monotonic
 from uuid import uuid4
 
 import pytest
 
-from app.schemas.products import ProductCandidateData
+from app.schemas.products import ProductCandidateData, ProductSource
 from app.services import product_photos
 
 SOURCE_URL = "https://shop.example.com/products/chair"
@@ -69,21 +70,28 @@ def test_structured_product_photo_requires_matching_model_and_option(monkeypatch
 
 
 @pytest.mark.parametrize(
-    ("page_type", "photo", "expected"),
+    ("page_type", "photo", "secure_photo", "expected"),
     [
-        ("product", IMAGE_URL, IMAGE_URL),
-        ("website", IMAGE_URL, None),
-        ("product", "http://cdn.example.com/chair.jpg", None),
-        ("product", "https://unavailable.example.com/chair.jpg", None),
+        ("product", IMAGE_URL, None, IMAGE_URL),
+        ("website", IMAGE_URL, None, None),
+        ("product", "http://cdn.example.com/chair.jpg", None, None),
+        ("product", "http://cdn.example.com/chair.jpg", IMAGE_URL, IMAGE_URL),
+        ("website", "http://cdn.example.com/chair.jpg", IMAGE_URL, None),
+        ("product", IMAGE_URL, "https://cdn.example.com/alternate.jpg", IMAGE_URL),
+        ("product", "https://unavailable.example.com/chair.jpg", None, None),
     ],
 )
-def test_open_graph_uses_public_https_product_photo(monkeypatch, page_type, photo, expected):
+def test_open_graph_uses_public_https_product_photo(
+    monkeypatch, page_type, photo, secure_photo, expected
+):
     html = (
         '<meta property><script type="application/ld+json">invalid</script>'
         f'<meta property="og:type" content="{page_type}">'
         '<meta property="og:title" content="캠핑 의자 CHAIR-10">'
         f'<meta property="og:image" content="{photo}">'
     )
+    if secure_photo:
+        html += f'<meta property="og:image:secure_url" content="{secure_photo}">'
     monkeypatch.setattr(product_photos, "_read_public_html", lambda url, deadline: (url, html))
     monkeypatch.setattr(
         product_photos,
@@ -94,6 +102,59 @@ def test_open_graph_uses_public_https_product_photo(monkeypatch, page_type, phot
     product_photos.attach_product_photos([product])
     assert product.image_url == expected
     assert product.image_source_url == (SOURCE_URL if expected else None)
+
+
+@pytest.mark.parametrize("preferred_ready", [True, False])
+def test_waits_only_for_sources_still_needed_by_candidates(monkeypatch, preferred_ready):
+    product = candidate()
+    alternate_url = "https://alternate.example.com/products/chair"
+    product.sources.append(ProductSource(url=alternate_url, title="다른 제품 상세"))
+
+    ready = Future()
+    ready.set_result({product.candidate_id: IMAGE_URL})
+    waiting = Future()
+    if preferred_ready:
+        ready_url, waiting_url = SOURCE_URL, alternate_url
+    else:
+        ready_url, waiting_url = alternate_url, SOURCE_URL
+    lookups = {ready_url: ready, waiting_url: waiting}
+
+    def submit_lookup(_lookup, url, _matches, _deadline):
+        return lookups[url]
+
+    monkeypatch.setattr(product_photos._WORKERS, "submit", submit_lookup)
+    monkeypatch.setattr(product_photos, "_LOOKUP_SECONDS", 0.01)
+    try:
+        product_photos.attach_product_photos([product])
+        assert (product.image_url, product.image_source_url) == (IMAGE_URL, ready_url)
+        assert waiting.cancelled() is preferred_ready
+    finally:
+        waiting.cancel()
+
+
+def test_waits_for_shared_source_when_another_candidate_needs_a_photo(monkeypatch):
+    shared_url = "https://alternate.example.com/products"
+    shared_source = ProductSource(url=shared_url, title="제품 상세")
+    first = candidate()
+    first.sources.append(shared_source)
+    second = candidate()
+    second.sources = [shared_source]
+    second_image = "https://cdn.example.com/chair-blue.jpg"
+
+    preferred = Future()
+    preferred.set_result({first.candidate_id: IMAGE_URL})
+    shared = Future()
+    shared.set_result({first.candidate_id: second_image, second.candidate_id: second_image})
+    lookups = {SOURCE_URL: preferred, shared_url: shared}
+
+    def submit_lookup(_lookup, url, _matches, _deadline):
+        return lookups[url]
+
+    monkeypatch.setattr(product_photos._WORKERS, "submit", submit_lookup)
+    product_photos.attach_product_photos([first, second])
+
+    assert (first.image_url, first.image_source_url) == (IMAGE_URL, SOURCE_URL)
+    assert (second.image_url, second.image_source_url) == (second_image, shared_url)
 
 
 def test_redirect_destination_is_checked_before_connecting(monkeypatch):
