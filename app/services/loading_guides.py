@@ -306,7 +306,7 @@ def _generate(payload: LoadingGuideCreate, context: dict, settings: Settings) ->
             reply = "기존 짐은 현재 위치와 방향을 유지하고 그림에 표시된 새 짐만 추가해 주세요."
         current_folds = context["current_folded_segments"]
         target_folds = set(context["target_folded_segments"])
-        if target_folds != set(current_folds or []):
+        if current_folds is None or target_folds != set(current_folds):
             reply += " 좌석은 그림에 나온 상태인지 확인해 주세요."
         if context["exclusions"]:
             names = ", ".join(f"{row['name']} {row['quantity']}개" for row in context["exclusions"])

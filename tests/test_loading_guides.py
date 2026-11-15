@@ -44,17 +44,22 @@ def post(client, path, payload, key=None):
     return client.post(path, json=payload, headers={"Idempotency-Key": str(key or uuid4())})
 
 
-def source(app, kind="saved", plan_input=PLAN):
+def source(app, kind="saved", plan_input=PLAN, *, calculation_options=None):
+    options = calculation_options or {}
     if kind == "saved":
         response = post(app.client, "/api/v1/plans", plan_input)
         assert response.status_code == 201, response.text
         plan = response.json()["data"]
-        response = post(app.client, f"/api/v1/plans/{plan['plan_id']}/calculations", {})
+        response = post(app.client, f"/api/v1/plans/{plan['plan_id']}/calculations", options)
         assert response.status_code == 201, response.text
         calculation = response.json()["data"]
         reference = {"plan_id": plan["plan_id"], "calculation_id": calculation["calculation_id"]}
     else:
-        response = post(app.client, "/api/v1/calculations/preview", {"plan": plan_input})
+        response = post(
+            app.client,
+            "/api/v1/calculations/preview",
+            {"plan": plan_input, "calculation_options": options},
+        )
         assert response.status_code == 201, response.text
         preview = response.json()["data"]
         calculation = preview["calculation"]
@@ -440,6 +445,24 @@ def test_source_changing_during_generation_does_not_save_old_guide(guide_app):
 
 
 @pytest.mark.parametrize("kind", ["saved", "preview"])
+@pytest.mark.parametrize("current_folds", [None, []], ids=["unknown", "confirmed_unfolded"])
+def test_guide_checks_unknown_seat_state_for_an_unfolded_layout(guide_app, kind, current_folds):
+    app = guide_app
+    options = {} if current_folds is None else {"current_folded_segments": current_folds}
+    reference, calculation, candidate = source(app, kind, calculation_options=options)
+    assert calculation["current_folded_segments"] == current_folds
+    assert candidate["target_folded_segments"] == []
+
+    install_model(app)
+    response = post(app.client, PATH, reference)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["source"] == "AI"
+    reminder = "좌석은 그림에 나온 상태인지 확인해 주세요."
+    assert (reminder in data["reply"]) is (current_folds is None)
+
+
+@pytest.mark.parametrize("kind", ["saved", "preview"])
 def test_camping_guide_describes_the_saved_position_and_rotation_in_korean(guide_app, kind):
     app = guide_app
     plan = {
@@ -463,7 +486,9 @@ def test_camping_guide_describes_the_saved_position_and_rotation_in_korean(guide
             },
         ],
     }
-    reference, _, candidate = source(app, kind, plan)
+    reference, _, candidate = source(
+        app, kind, plan, calculation_options={"current_folded_segments": []}
+    )
     placements = sorted(candidate["placements"], key=lambda p: p["load_order"])
     assert [
         (p["space_id"], p["x_cm"], p["y_cm"], p["z_cm"], p["orientation"]) for p in placements
